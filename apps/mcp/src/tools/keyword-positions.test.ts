@@ -8,7 +8,11 @@ import {
   projectNotFoundMessage,
   type ProjectRef,
 } from "./project-target.ts";
-import type { MeasurementFilter, StoredMeasurement } from "./keyword-positions-store.ts";
+import type {
+  MeasurementFilter,
+  StoredMeasurement,
+  StoredReportSummary,
+} from "./keyword-positions-store.ts";
 import {
   GAP_SENTENCE,
   MAX_CONTIGUOUS_GAP_HOURS,
@@ -17,6 +21,7 @@ import {
   renderInterval,
 } from "./keyword-positions-format.ts";
 import { makeKeywordPositionsTool, normalizeKeywordFilter } from "./keyword-positions.ts";
+import { AI_FAN_OUT_NOTE } from "./serp-features.ts";
 
 const ctx: AuthContext = { userId: "user-1", keyId: "key-1" };
 const project: ProjectRef = { id: "p-1", domain: "example.com", archivedAt: null };
@@ -43,8 +48,18 @@ function reading(over: Partial<StoredMeasurement> = {}): StoredMeasurement {
     vendorReportedTimeField: "datetime",
     vendorReportedTimeValue: "2026-08-20 04:00:00 +00:00",
     fetchedAt: "2026-08-20T04:00:00.000Z",
+    // DEFAULTED TO "NOT RECORDED" RATHER THAN OMITTED. A missing key would be silently allowed
+    // here — spreading a `Partial<T>` relaxes TypeScript's completeness check — and every spec
+    // below would then run against a row shape the reader never produces (signed lesson 12: a
+    // double more permissive than the runtime turns a missing case into a passing test).
+    report: null,
     ...over,
   };
+}
+
+/** A `report` in the shape `readStoredReport` hands back for a row `serp_snapshot` wrote. */
+function report(url: string | null, itemTypes: readonly string[]): StoredReportSummary {
+  return { rankedUrl: url, itemTypes };
 }
 
 function makeTool(options: {
@@ -505,5 +520,110 @@ describe("two readings are the same series only if everything they were measured
     });
     expect(text).toMatch(/no search engine was contacted for this answer/i);
     expect(text).toMatch(/SeoGrep computes no score/i);
+  });
+});
+
+/**
+ * S-1 (inherited as `keyword_positions` F-5) — THE PAID READ CAN NOW SAY WHICH PAGE RANKED.
+ *
+ * `serp_snapshot` bought the ranking URL and DataForSEO's page-level `item_types`, wrote both into
+ * the row's `report` jsonb, and this reader did not project the column. So a 10-credit read said
+ * `rank_group #4` without saying #4 of WHAT, and the AI Overview flag the product had paid for was
+ * visible on no surface at all (R-5.5 / R-8.4 / R-8.5).
+ */
+describe("what the stored report adds to a reading (S-1)", () => {
+  const windowOf = (rows: readonly StoredMeasurement[]) =>
+    formatKeywordPositions("x", "", {
+      windowLimit: 10,
+      windowRowCount: rows.length,
+      storedMeasurementCount: rows.length,
+      rows,
+    });
+
+  it("prints the URL that ranked, beside the rank it belongs to", () => {
+    const text = windowOf([
+      reading({ report: report("https://example.com/tools", ["organic"]) }),
+    ]);
+    expect(text).toContain("https://example.com/tools");
+  });
+
+  /**
+   * The phrase is chosen so the negative branch cannot satisfy it: "AI Overview" on its own is a
+   * substring of "No AI Overview reported" too, and asserting on it would pass over a reading
+   * this tool said had none (signed lesson 11).
+   */
+  it("reports an AI Overview the snapshot recorded on that page", () => {
+    const text = windowOf([
+      reading({ report: report("https://example.com/tools", ["organic", "ai_overview"]) }),
+    ]);
+    expect(text).toMatch(/AI Overview PRESENT/);
+  });
+
+  it("says no AI Overview was reported when the page carried none", () => {
+    const text = windowOf([
+      reading({ report: report("https://example.com/tools", ["organic", "featured_snippet"]) }),
+    ]);
+    expect(text).toMatch(/No AI Overview reported/);
+    expect(text).not.toMatch(/AI Overview PRESENT/);
+    expect(text).toContain("featured_snippet");
+  });
+
+  /**
+   * THE DONE-WHEN FOR OLD ROWS. Rows written before the URL and the feature list were readable —
+   * or whose jsonb this reader cannot parse — say NOT RECORDED. That is not the same claim as
+   * "there was no URL and no feature on that page", and the difference is the whole reason the
+   * reader returns `null` instead of an empty summary.
+   */
+  it("says a reading's URL and features were not recorded, rather than inventing an absence", () => {
+    const text = windowOf([reading({ report: null })]);
+    expect(text).toMatch(/not recorded/i);
+    expect(text).not.toMatch(/No AI Overview reported/);
+    expect(text).not.toMatch(/SERP features besides organic/);
+  });
+
+  /**
+   * A NON-MEASUREMENT HAS NO PAGE. Printing a feature summary there would be the collapse the
+   * three answers exist to prevent — an absence of knowledge rendered as knowledge of an absence.
+   */
+  it("adds nothing to a reading that was never taken", () => {
+    const text = windowOf([
+      reading({
+        status: "not_measured",
+        notMeasuredReason: "the vendor returned no result",
+        bestRankGroup: null,
+        bestRankAbsolute: null,
+        organicItemsExamined: null,
+      }),
+    ]);
+    expect(text).toContain("NOT MEASURED");
+    expect(text).not.toMatch(/SERP features besides organic/);
+    expect(text).not.toMatch(/not recorded/i);
+  });
+
+  /**
+   * An absence still had a PAGE, and what was on it is often the explanation: a SERP where an AI
+   * Overview and a featured snippet occupy the top is a different finding from an empty one. So
+   * the feature line survives an `absent_from_examined_results` reading; only the URL, which
+   * belongs to a placement that does not exist, does not.
+   */
+  it("keeps the page's features on a reading that found no placement", () => {
+    const text = windowOf([
+      reading({
+        status: "absent_from_examined_results",
+        bestRankGroup: null,
+        bestRankAbsolute: null,
+        report: report(null, ["organic", "ai_overview_table_element"]),
+      }),
+    ]);
+    expect(text).toContain("ai_overview_table_element");
+    expect(text).toMatch(/AI Overview PRESENT/);
+  });
+
+  /** R-5.5 — the caveat rides with the claim, and appears only where there is one to qualify. */
+  it("qualifies an AI Overview claim with the query fan-out it cannot see", () => {
+    const withAi = windowOf([reading({ report: report(null, ["organic", "ai_overview"]) })]);
+    expect(withAi).toContain(AI_FAN_OUT_NOTE);
+    const withoutAi = windowOf([reading({ report: report(null, ["organic"]) })]);
+    expect(withoutAi).not.toContain(AI_FAN_OUT_NOTE);
   });
 });

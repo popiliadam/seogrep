@@ -24,6 +24,7 @@ import {
   serpSnapshotCredits,
 } from "./serp-snapshot.ts";
 import { formatSerpSnapshot } from "./serp-snapshot-format.ts";
+import { AI_FAN_OUT_NOTE } from "./serp-features.ts";
 import {
   MAX_STORED_PLACEMENTS,
   bestPlacement,
@@ -75,6 +76,40 @@ function rowOf(snapshot: SerpSnapshotResult): SerpKeywordRow {
   const [row] = snapshot.rows;
   if (row === undefined) throw new Error("the snapshot returned no rows");
   return row;
+}
+
+/**
+ * The REAL capture's envelope with one or more result fields replaced.
+ *
+ * Used for the vendor pages this repository has no capture of — an item type nobody has seen yet,
+ * a placement the vendor sent without a `url`. Everything else stays the real payload's, so what
+ * is exercised is the parser and the renderer rather than a hand-built double that is more
+ * permissive than the wire (signed lesson 12).
+ */
+function fixtureWithResult(overrides: Record<string, unknown>): unknown {
+  const base = structuredClone(fixture) as unknown as {
+    tasks: { result: Record<string, unknown>[] }[];
+  };
+  const task = base.tasks[0];
+  const result = task?.result[0];
+  if (task === undefined || result === undefined) throw new Error("the fixture carries no result");
+  task.result[0] = { ...result, ...overrides };
+  return base;
+}
+
+/** The whole answer for one keyword, off an envelope this test built. */
+async function textFor(envelope: unknown, targetDomain = "rival-one-fixture.test"): Promise<string> {
+  const port = createMockSerpSnapshotPort(envelope, CLOCK);
+  return formatSerpSnapshot(
+    `"${targetDomain}"`,
+    await port.fetchSerpSnapshot({
+      target_domain: targetDomain,
+      keywords: ["seo software"],
+      location_name: "United States",
+      language_code: "en",
+      device: "desktop",
+    }),
+  );
 }
 
 /** A vendor envelope that PARSED but carried no result — the port's `not_measured` path. */
@@ -500,6 +535,43 @@ describe("what the answer says (NEVER #7)", () => {
   });
 
   /**
+   * THE RANKING PAGE'S URL, ON THE PLACEMENT LINE — S-2, a pin over EXISTING behaviour rather
+   * than a new claim.
+   *
+   * Measured 2026-09-03 (mutation M-SS7, re-run by the referee): deleting `— ${url}` from
+   * `renderPlacement` left 4016 of 4016 tests green. `keyword_positions` printed no URL either,
+   * so the product's ONLY reading of a paid-for `SerpPlacement.url` sat behind no assertion at
+   * all — signed lesson 12: a green surface is evidence only once it has been broken on purpose
+   * and gone red.
+   *
+   * The assertion is a REGEX over the shortest distinguishing piece — the PATH, which the heading
+   * does not carry — anchored to the rank pair it belongs beside (signed lesson 11), so a URL
+   * printed anywhere else in the answer could not satisfy it.
+   */
+  it("prints the URL of the ranking page beside the ranks it belongs to", async () => {
+    const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(text).toMatch(
+      /rank_group #1 \(rank_absolute 2\) — https:\/\/rival-one-fixture\.test\/seo-software/,
+    );
+  });
+
+  /**
+   * The other half of that line: a placement the vendor sent WITHOUT a `url` says so, rather than
+   * trailing an empty dash that reads as "no page at all". `toPlacement` carries `url: null` for
+   * any non-string, so the branch is reachable from any payload and is pinned from one.
+   */
+  it("states the absence of a URL instead of trailing an empty dash", async () => {
+    const text = await textFor(
+      fixtureWithResult({
+        items: [
+          { type: "organic", rank_group: 1, rank_absolute: 1, domain: "rival-one-fixture.test" },
+        ],
+      }),
+    );
+    expect(text).toMatch(/rank_group #1 \(rank_absolute 1\) — no URL reported/);
+  });
+
+  /**
    * OUR clock and the vendor's are two different claims and are never merged — and the pair is
    * printed PER KEYWORD, never once for the snapshot. An N-keyword snapshot is N separate requests
    * with N separate timestamps, so a single summary line would have to speak for requests it never
@@ -538,5 +610,84 @@ describe("what the answer says (NEVER #7)", () => {
     const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
     expect(text).toContain("1 measurement recorded");
     expect(text).toContain("keyword_positions");
+  });
+});
+
+/**
+ * S-1 — THE PAGE'S OWN FEATURES, WHICH WERE PARSED, STORED AND PAID FOR AND PRINTED NOWHERE.
+ *
+ * `vendor_item_types` reaches `report.vendor_page.item_types` (serp-snapshot-store.ts:134) and no
+ * surface in the product read it back: `grep -i item_types` matched zero lines in either
+ * formatter, and the web Rankings page skips `report` on purpose. So AI Overview presence was
+ * measured on every paid snapshot and visible to nobody (R-5.5 / R-8.4 / R-8.5).
+ */
+describe("the SERP features the page carried (S-1)", () => {
+  /** The real capture carries a featured snippet and a PAA block, and no AI Overview. */
+  it("names the features the vendor reported beside the organic results", async () => {
+    const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(text).toContain("featured_snippet");
+    expect(text).toContain("people_also_ask");
+  });
+
+  it("says no AI Overview was reported when the vendor reported none", async () => {
+    const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(text).toMatch(/No AI Overview reported/);
+    expect(text).not.toMatch(/AI Overview PRESENT/);
+  });
+
+  /**
+   * The DONE-WHEN of the AI half, and the phrase is chosen so it cannot be satisfied by the
+   * negative branch: "AI Overview" alone is a substring of "No AI Overview reported" too, and an
+   * assertion on it would pass over a page this tool said had none (signed lesson 11).
+   */
+  it("reports an AI Overview when the vendor put one on the page", async () => {
+    const text = await textFor(
+      fixtureWithResult({
+        item_types: ["organic", "ai_overview_video_element"],
+      }),
+    );
+    expect(text).toMatch(/AI Overview PRESENT/);
+    expect(text).toContain("ai_overview_video_element");
+  });
+
+  /** R-8.5's own risk, exercised with a name that exists nowhere but in this test. */
+  it("carries an item type nobody has written down through to the answer", async () => {
+    const text = await textFor(
+      fixtureWithResult({ item_types: ["organic", "invented_serp_feature_element"] }),
+    );
+    expect(text).toContain("invented_serp_feature_element");
+  });
+
+  /**
+   * R-5.5. The caveat rides with the CLAIM, so it appears exactly when an AI Overview was
+   * reported and not otherwise — a note printed on every answer is a note nobody reads, and a
+   * claim printed without it invites "we are in the AI Overview", which this never measured.
+   */
+  it("qualifies an AI Overview claim with the query fan-out it cannot see", async () => {
+    const withAi = await textFor(fixtureWithResult({ item_types: ["organic", "ai_overview"] }));
+    expect(withAi).toContain(AI_FAN_OUT_NOTE);
+    const withoutAi = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(withoutAi).not.toContain(AI_FAN_OUT_NOTE);
+  });
+
+  /**
+   * A NON-MEASUREMENT HAS NO PAGE, so it gets no feature line. Printing "none reported" there
+   * would be the same collapse the three outcomes exist to prevent: an absence of knowledge
+   * rendered as knowledge of an absence.
+   */
+  it("prints no feature line for a keyword that was never measured", async () => {
+    const port = createMockSerpSnapshotPort(NO_RESULT_ENVELOPE, CLOCK);
+    const text = formatSerpSnapshot(
+      '"x.test"',
+      await port.fetchSerpSnapshot({
+        target_domain: "x.test",
+        keywords: ["k"],
+        location_name: "United States",
+        language_code: "en",
+        device: "desktop",
+      }),
+    );
+    expect(text).toContain("NOT MEASURED");
+    expect(text).not.toMatch(/SERP features besides organic/);
   });
 });

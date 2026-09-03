@@ -3527,6 +3527,26 @@ export const DOC_PROSE = {
           "SeoGrep computes no visibility score, no share of voice and no ranking of its own.",
       },
       {
+        heading: "What else was on the page, including AI Overviews",
+        body:
+          "Every measured keyword also reports the **SERP features DataForSEO listed for that " +
+          "page** — a featured snippet, a \"people also ask\" block, a video carousel, an AI " +
+          "Overview — counted and named under the **vendor's own identifiers**. Nothing is " +
+          "renamed into friendlier words, because that would be inventing a mapping onto a " +
+          "taxonomy SeoGrep does not own, and nothing is dropped for being unfamiliar: a feature " +
+          "type the vendor ships tomorrow reaches the page tomorrow. Where a page carries more " +
+          "features than one line holds, the extras are **counted**, never quietly discarded.\n\n" +
+          "This is also the direct explanation of a gap between `rank_group` and " +
+          "`rank_absolute`: the features sitting above your result are what separate the two " +
+          "numbers.\n\n" +
+          "**An AI Overview here means one thing only** — DataForSEO reported the block on that " +
+          "results page for that keyword. It does **not** say whether your site is cited inside " +
+          "it. Google builds its AI features by *query fan-out*: it runs further searches of its " +
+          "own across sub-topics and draws on a wider set of pages than the single keyword " +
+          "measured here. So one keyword's snapshot is not a measure of a site's AI visibility, " +
+          "and the answer says exactly that wherever it reports one.",
+      },
+      {
         heading: "What a reading is scoped to",
         body:
           "A position is a measurement at a moment, not a property of a site. Every reading is " +
@@ -3614,6 +3634,23 @@ export const DOC_PROSE = {
           "organic one says exactly that, and prints the number it did send. One sentence for " +
           "both would have printed \"DataForSEO reported no rank\" over a row on which " +
           "DataForSEO had reported one.",
+      },
+      {
+        heading: "Which page ranked, and what else was on the SERP",
+        body:
+          "A rank is `#4` of something, so each reading also names the **URL that ranked** and " +
+          "the **SERP features DataForSEO recorded on that page** — a featured snippet, a " +
+          "\"people also ask\" block, an AI Overview — under the vendor's own identifiers. Both " +
+          "were captured by [`serp_snapshot`](/docs/tools-reference/serp-snapshot) when the " +
+          "reading was taken; nothing here contacts a search engine to get them.\n\n" +
+          "Readings taken before this was recorded say **not recorded** rather than reporting an " +
+          "absence. \"We did not write it down\" and \"there was nothing there\" are different " +
+          "claims, and this page never prints the first as the second.\n\n" +
+          "**An AI Overview here means one thing only** — the block was on that results page for " +
+          "that keyword when the snapshot was taken. It does **not** say whether your site is " +
+          "cited inside it: Google builds its AI features by *query fan-out*, running further " +
+          "searches across sub-topics and drawing on a wider set of pages than the one keyword " +
+          "measured, so a single reading is not a measure of AI visibility.",
       },
       {
         heading: "If nothing has been measured yet",

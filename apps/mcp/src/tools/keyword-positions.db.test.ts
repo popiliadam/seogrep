@@ -109,6 +109,12 @@ interface SeedMeasurement {
   readonly notMeasuredReason?: string | null;
   readonly keyword?: string;
   readonly device?: string;
+  /**
+   * The row's `report` jsonb. Defaults to the placement-only shape these specs have always used,
+   * which `readStoredReport` correctly calls NOT RECORDED: it carries no `vendor_page`, so there
+   * is no URL and no feature list in it to read. Spec (i) is the only place it is overridden.
+   */
+  readonly report?: unknown;
 }
 
 /** Write one measurement the way the (Part B) snapshot writer will: identity, status, report. */
@@ -138,7 +144,7 @@ async function seedMeasurement(
     vendor_reported_time_field: "datetime",
     vendor_reported_time_value: "2026-08-20 04:00:00 +00:00",
     fetched_at: row.fetchedAt,
-    report: { placements: [], placements_found: 0 },
+    report: (row.report ?? { placements: [], placements_found: 0 }) as never,
   });
   if (error) throw new Error(`measurement insert failed: ${error.message}`);
 }
@@ -340,5 +346,60 @@ describe("keyword_positions credit path against the local stack", () => {
     const result = await tool.run(ctx, { project_id: project.id, keyword: "  SEO   Tools " });
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain("rank_group #3");
+  });
+
+  /**
+   * (i) S-1 — `report` SURVIVES POSTGRES AND REACHES THE ANSWER, IN BOTH DIRECTIONS.
+   *
+   * The fast lane proves the renderer prints the URL and the features once a summary arrives, and
+   * that `COLUMNS` asks PostgREST for the column. What neither can prove is that a real `jsonb`
+   * value comes back in a shape `readStoredReport` accepts — the very step that made this a
+   * finding, since the data was written correctly all along and only the read could not see it.
+   *
+   * BOTH BRANCHES ARE PINNED IN ONE READ, because the pair is the claim: a row whose report holds
+   * a vendor page reports what was on it, and a row whose report does not says NOT RECORDED
+   * rather than "no features" — the distinction the guard in `readStoredReport` exists for, and
+   * the one an "empty list means empty page" regression would erase silently.
+   *
+   * NOT RUN IN THIS SLICE (this lane needs Docker; `make verify` does not run it). CI and the
+   * referee are what execute it.
+   */
+  it("(i) reads the URL and the AI Overview out of real jsonb, and says NOT RECORDED without one", async () => {
+    const ctx = await makeCtx();
+    await seedPurchase(ctx.userId, 300);
+    const project = await makeProject(ctx.userId);
+    await seedMeasurement(ctx.userId, project.id, project.domain, {
+      fetchedAt: "2026-08-20T04:00:00.000Z",
+      status: "ranked",
+      bestRankGroup: 4,
+      report: {
+        placements_found: 1,
+        placements_stored: 1,
+        placements: [
+          { rank_group: 4, rank_absolute: null, domain: project.domain, url: "https://ranked.test/page-4" },
+        ],
+        vendor_page: {
+          check_url: "https://www.google.com/search?q=seo+tools",
+          se_results_count: 1234,
+          item_types: ["organic", "ai_overview_expanded_element"],
+          echoed_keyword: "seo tools",
+        },
+      },
+    });
+    await seedMeasurement(ctx.userId, project.id, project.domain, {
+      fetchedAt: "2026-08-19T04:00:00.000Z",
+      status: "ranked",
+      bestRankGroup: 9,
+      keyword: "older reading",
+    });
+
+    const text = (await tool.run(ctx, { project_id: project.id })).content[0]?.text ?? "";
+    expect(text).toContain("https://ranked.test/page-4");
+    // "AI Overview" alone is a substring of "No AI Overview reported" too (signed lesson 11).
+    expect(text).toMatch(/AI Overview PRESENT/);
+    expect(text).toContain("ai_overview_expanded_element");
+    expect(text).toMatch(/fan-out/i);
+    // The row seeded without a vendor page says so, instead of claiming an empty SERP.
+    expect(text).toMatch(/were not recorded for this reading/);
   });
 });

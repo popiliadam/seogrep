@@ -27,6 +27,14 @@ A position is never compared across either of them, because there is no second p
 
 A reading where the domain was **found** but the vendor reported no rank is a third case, and it is really two, kept apart. DataForSEO has two rank scales — the organic-only one and the one counting every element on the page — and it may withhold either. A row with neither says so; a row where it gave the all-elements rank and withheld the organic one says exactly that, and prints the number it did send. One sentence for both would have printed "DataForSEO reported no rank" over a row on which DataForSEO had reported one.
 
+## Which page ranked, and what else was on the SERP
+
+A rank is `#4` of something, so each reading also names the **URL that ranked** and the **SERP features DataForSEO recorded on that page** — a featured snippet, a "people also ask" block, an AI Overview — under the vendor's own identifiers. Both were captured by [`serp_snapshot`](/docs/tools-reference/serp-snapshot) when the reading was taken; nothing here contacts a search engine to get them.
+
+Readings taken before this was recorded say **not recorded** rather than reporting an absence. "We did not write it down" and "there was nothing there" are different claims, and this page never prints the first as the second.
+
+**An AI Overview here means one thing only** — the block was on that results page for that keyword when the snapshot was taken. It does **not** say whether your site is cited inside it: Google builds its AI features by *query fan-out*, running further searches across sub-topics and drawing on a wider set of pages than the one keyword measured, so a single reading is not a measure of AI visibility.
+
 ## If nothing has been measured yet
 
 The tool says so and **charges nothing** — that refusal is returned before any credits are reserved. It is the **only** free answer this tool gives: a read that delivers stored readings is charged at the cost above, whether it returns one reading or hundreds.

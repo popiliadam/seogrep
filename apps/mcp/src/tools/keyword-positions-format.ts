@@ -1,4 +1,5 @@
 import type { MeasurementWindow, StoredMeasurement } from "./keyword-positions-store.ts";
+import { AI_FAN_OUT_NOTE, isAiOverviewType, renderSerpFeatures } from "./serp-features.ts";
 
 /**
  * How a stored series is put into words — the whole honesty surface of `keyword_positions`, kept
@@ -150,6 +151,56 @@ export function renderSeriesHeading(row: StoredMeasurement, storedInWindow: numb
   );
 }
 
+/**
+ * What the snapshot RECORDED about the page this reading was taken from: the URL that ranked, and
+ * DataForSEO's own list of what else was on the SERP. Returns null when there is nothing to say.
+ *
+ * THREE BRANCHES, AND THE MIDDLE ONE IS THE POINT:
+ *
+ *   · `not_measured` — no page was ever fetched, so there is nothing to describe. Printing "no
+ *     features reported" here would render an absence of knowledge as knowledge of an absence,
+ *     which is the collapse the three answers exist to prevent.
+ *   · `report === null` — a row written before this was readable, or a `report` jsonb this reader
+ *     could not parse. It says NOT RECORDED, which is a different claim from "the page had no URL
+ *     and no features" and must never be printed as one.
+ *   · otherwise — the URL (only where a placement exists to own it) and the feature summary.
+ *
+ * ONE LINE, NOT TWO. This window may hold up to 200 readings, so every line here is paid for 200
+ * times over in the caller's context; the URL and the features share a line for that reason.
+ */
+export function renderReadingContext(row: StoredMeasurement): string | null {
+  if (row.status === "not_measured") return null;
+  if (row.report === null) {
+    return "    The ranking URL and the page's SERP features were not recorded for this reading.";
+  }
+  const parts: string[] = [];
+  // The URL belongs to a PLACEMENT, so an absence has none to print — there is no page that
+  // ranked. The features survive: what occupied a SERP the domain did not appear on is often the
+  // finding itself.
+  if (row.status === "ranked") {
+    parts.push(
+      row.report.rankedUrl === null
+        ? "ranking URL not recorded"
+        : `ranked URL ${row.report.rankedUrl}`,
+    );
+  }
+  parts.push(renderSerpFeatures(row.report.itemTypes));
+  return `    ${parts.join(" · ")}`;
+}
+
+/**
+ * TRUE WHEN ANY READING IN THE WINDOW RECORDED AN AI OVERVIEW — the only condition under which
+ * {@link AI_FAN_OUT_NOTE} belongs on the answer. A `not_measured` reading is skipped for the same
+ * reason it gets no context line: nothing was fetched, so its silence is not evidence.
+ */
+export function reportsAiOverview(rows: readonly StoredMeasurement[]): boolean {
+  return rows.some(
+    (row) =>
+      row.status !== "not_measured" &&
+      (row.report?.itemTypes ?? []).some(isAiOverviewType),
+  );
+}
+
 /** Our clock and the vendor's, never merged — the port's rule, carried through to the page. */
 export function renderClocks(row: StoredMeasurement): string {
   return row.vendorReportedTimeValue === null
@@ -254,6 +305,8 @@ export function renderSeries(series: Series): string {
   lines.push(renderSeriesHeading(first, series.rows.length));
   series.rows.forEach((row, index) => {
     lines.push(renderReading(row));
+    const context = renderReadingContext(row);
+    if (context !== null) lines.push(context);
     lines.push(renderClocks(row));
     const older = series.rows[index + 1];
     if (older !== undefined) lines.push(renderInterval(row, older));
@@ -290,11 +343,16 @@ export function formatKeywordPositions(
   window: MeasurementWindow,
 ): string {
   const series = groupIntoSeries(window.rows);
+  // R-5.5, and only where there is a claim to qualify. An AI Overview line above says the block
+  // was on that page for that keyword; it says nothing about whether this site is cited INSIDE
+  // it, and Google's query fan-out is why those are not the same question.
+  const fanOut = reportsAiOverview(window.rows) ? AI_FAN_OUT_NOTE : "";
   return [
     `Stored keyword positions for ${subject}.`,
     filterClause,
     renderWindowCaption(window, series.length),
     series.map(renderSeries).join("\n\n"),
+    fanOut,
     STORED_READ_NOTE,
   ]
     .filter((block) => block.length > 0)

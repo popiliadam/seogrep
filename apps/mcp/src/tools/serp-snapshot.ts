@@ -167,7 +167,9 @@ const DESCRIPTION =
   "a fixed depth. Three answers are kept apart and never collapsed into a number: found (with " +
   "DataForSEO's own rank_group and rank_absolute), searched for and not found among the results " +
   "actually examined, and not measured at all. SeoGrep computes no visibility score and no " +
-  "ranking of its own. Synchronous — everything comes back immediately. Costs " +
+  "ranking of its own. Every measured page also reports the SERP features DataForSEO listed for " +
+  "it, under the vendor's own names and including whether an AI Overview was on the page. " +
+  "Synchronous — everything comes back immediately. Costs " +
   `${TOOL_COSTS.serp_snapshot} credits, charged per keyword, plus a fixed ${PRICE_RULE.base} ` +
   `credits per call — one keyword costs ${serpSnapshotCredits(MIN_SERP_KEYWORDS)} and ` +
   `${MAX_SERP_KEYWORDS} cost ${serpSnapshotCredits(MAX_SERP_KEYWORDS)}. Needs a paid credit ` +

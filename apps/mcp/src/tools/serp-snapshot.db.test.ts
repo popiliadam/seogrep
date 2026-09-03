@@ -171,8 +171,14 @@ function page(domains: readonly string[]): unknown[] {
   return domains.map((domain, index) => organic(index + 1, index + 2, domain));
 }
 
-/** A DataForSEO SERP envelope carrying `items`. Built here — no vendor is ever contacted. */
-function envelope(items: readonly unknown[]): unknown {
+/**
+ * A DataForSEO SERP envelope carrying `items`. Built here — no vendor is ever contacted.
+ *
+ * `itemTypes` is the PAGE-level list, which is a different thing from the items: it is what the
+ * vendor says was on the SERP, it reaches `report.vendor_page.item_types` through a real jsonb
+ * round trip, and spec (h) is the only place its default is overridden.
+ */
+function envelope(items: readonly unknown[], itemTypes: readonly string[] = ["organic"]): unknown {
   return {
     status_code: 20000,
     status_message: "Ok.",
@@ -187,7 +193,7 @@ function envelope(items: readonly unknown[]): unknown {
             keyword: "seo tools",
             check_url: "https://www.google.com/search?q=seo+tools&num=100",
             datetime: "2026-08-24 08:55:01 +00:00",
-            item_types: ["organic"],
+            item_types: itemTypes,
             se_results_count: 1234000,
             items,
           },
@@ -590,5 +596,45 @@ describe("serp_snapshot credit path against the local stack", () => {
     expect(narrowed.isError).toBeUndefined();
     expect(narrowed.content[0]?.text).toContain("rank_group #3");
     expect(narrowed.content[0]?.text).not.toContain("missing keyword");
+  });
+
+  /**
+   * (h) S-1 — THE PAID URL AND THE PAID FEATURE LIST SURVIVE A REAL `jsonb` ROUND TRIP.
+   *
+   * The fast lane proves the renderer prints them and that `COLUMNS` asks for the column. Neither
+   * touches PostgREST, and this is precisely the pairing the finding was made of: the data was
+   * WRITTEN correctly all along and unreachable on the way out. So the claim that closes it has to
+   * cross the database — `report` written by `serp_snapshot`, selected back by
+   * `keyword_positions`' widened projection, and parsed by `readStoredReport` out of whatever
+   * shape Postgres returns a `jsonb` in.
+   *
+   * NOT RUN IN THIS SLICE (this lane needs Docker; `make verify` does not run it). CI and the
+   * referee are what execute it.
+   */
+  it("(h) the ranking URL and the page's AI Overview reach keyword_positions through jsonb", async () => {
+    const ctx = await makeCtx();
+    await seedPurchase(ctx.userId, 500);
+    const project = await makeProject(ctx.userId);
+
+    await toolWith(
+      envelope(page(["rival.com", "other.com", project.domain]), [
+        "organic",
+        "featured_snippet",
+        "ai_overview_video_element",
+      ]),
+    ).run(ctx, { project_id: project.id, keywords: ["seo tools"] });
+
+    const read = await positionsTool.run(ctx, { project_id: project.id });
+    expect(read.isError).toBeUndefined();
+    const text = read.content[0]?.text ?? "";
+    // The URL belongs to the placement whose ranks the COLUMNS lifted (rank_group 3), not to the
+    // first placement in the stored list — the two are different rows of the same page.
+    expect(text).toContain(`https://${project.domain}/page-3`);
+    // "AI Overview" alone is a substring of "No AI Overview reported" too (signed lesson 11).
+    expect(text).toMatch(/AI Overview PRESENT/);
+    expect(text).toContain("ai_overview_video_element");
+    expect(text).toContain("featured_snippet");
+    // R-5.5 rides with the claim.
+    expect(text).toMatch(/fan-out/i);
   });
 });
