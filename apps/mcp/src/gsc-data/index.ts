@@ -13,6 +13,7 @@ export * from "./brand.ts";
 export * from "./quick-wins.ts";
 export * from "./cannibalization.ts";
 export * from "./content-decay.ts";
+export * from "./google-updates.ts";
 export * from "./format.ts";
 export * from "./load.ts";
 export * from "./runs.ts";
