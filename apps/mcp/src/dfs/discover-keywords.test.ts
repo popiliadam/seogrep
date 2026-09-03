@@ -1171,7 +1171,24 @@ describe("budget", () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  it("leaves the reservation OPEN at its estimate when the request fails", async () => {
+  /**
+   * DK-3 — A CONTRACT THAT CHANGED, not a spec bent to fit the code (NEVER #8).
+   *
+   * This block used to be titled "leaves the reservation OPEN at its estimate when the request
+   * fails" and it passed for the right reason: that WAS the contract, and its money half was
+   * sound. What DK-3 named is the way in that makes it cost something here — `location_code` is
+   * only `z.number().int().positive()` and `language_code` only `z.string().min(2)`, so a locale
+   * pair the vendor refuses sails through our schema, reaches the PAID endpoint and comes back as
+   * a rejected task. The customer is not charged, and a `dfs_spend` row nobody closes goes on
+   * eating the shared $3 ceiling. The identical shape was read straight off production on the
+   * sibling `relevant_pages` port (A-3): `status=open · actual null`, still open 45 minutes later.
+   *
+   * THE MONEY HALF OF THE OLD CLAIM IS KEPT AND STILL ASSERTED: the row settles at its ESTIMATE
+   * and never below it. 0014's counter is `coalesce(actual_usd, estimated_usd)`, so today's total
+   * is unchanged to the cent — which is why this is hygiene and not a loosening of the cap
+   * (NEVER #5).
+   */
+  it("SETTLES the reservation at its estimate when the request fails", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({
       ok: false,
       status: 502,
@@ -1181,8 +1198,74 @@ describe("budget", () => {
       liveClient(transport, ledger).fetchDiscoverKeywords(queryFor("ideas", { limit: 400 })),
     ).rejects.toThrow(/HTTP 502/);
     const row = ledger.rows()[0];
-    expect(row?.actualUsd).toBeNull();
     expect(row?.estimatedUsd).toBe(estimateDiscoverKeywordsUsd(400));
+    // Closed, at the number an open row already counted as — never null, and never lower.
+    expect(row?.actualUsd).toBe(estimateDiscoverKeywordsUsd(400));
+    expect(row?.rowCount).toBe(0);
+    // The whole point of settling at the estimate rather than at the vendor's reported cost: the
+    // day's total is identical to what the open row contributed.
+    await expect(ledger.todayUsd()).resolves.toBe(estimateDiscoverKeywordsUsd(400));
+  });
+
+  /**
+   * THE SHAPE DK-3 IS ACTUALLY ABOUT: the HTTP call succeeds and the TASK is rejected. Note the
+   * `cost: 0` it carries — settling at the vendor's reported zero would book a call the vendor may
+   * well have billed as free, which is why settleFailedSpend uses OUR estimate instead.
+   *
+   * WHAT IS NOT CLAIMED: that DataForSEO answers this particular locale pair with 40501. That
+   * costs a live paid call and the day's ceiling was spent. The spec pins what OUR port does with
+   * a rejected task, which is a fact about our own code.
+   */
+  it("settles it when the vendor REJECTS the task, which is DK-3's invalid-locale shape", async () => {
+    const rejected = {
+      status_code: 20000,
+      cost: 0,
+      tasks: [{ status_code: 40501, status_message: "Invalid Field: 'location_code'", cost: 0 }],
+    };
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => rejected,
+    }));
+    await expect(
+      liveClient(transport, ledger).fetchDiscoverKeywords({
+        ...queryFor("ideas"),
+        location_code: 999_999,
+        language_code: "zz",
+      }),
+    ).rejects.toThrow(/task failed \(status 40501\)/);
+    const row = ledger.rows()[0];
+    expect(row?.actualUsd).toBe(estimateDiscoverKeywordsUsd(DEFAULT_DISCOVER_ROWS));
+    expect(row?.actualUsd).not.toBe(0);
+  });
+
+  /**
+   * The THIRD failure shape, and the reason the `try` spans the parse and not just the request:
+   * this module's own reader THROWS on items that carried no keyword under the mode's carrier, and
+   * that throw happens AFTER the money was spent.
+   */
+  it("settles it when OUR OWN parser refuses a moved vendor shape", async () => {
+    const moved = envelope({ items: [{ not_a_keyword_field: "x" }] });
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => moved,
+    }));
+    await expect(
+      liveClient(transport, ledger).fetchDiscoverKeywords(queryFor("ideas")),
+    ).rejects.toThrow(/none carried a keyword/);
+    expect(ledger.rows()[0]?.actualUsd).toBe(estimateDiscoverKeywordsUsd(DEFAULT_DISCOVER_ROWS));
+  });
+
+  /**
+   * The success path must not have grown a SECOND settlement out of this. The in-memory ledger
+   * refuses a second settle of the same row and settleSpend swallows that, so the row count and
+   * the settled value — not an exception — are the evidence.
+   */
+  it("still settles a healthy call exactly once, at the vendor's real cost", async () => {
+    await liveClient(modeTransport(), ledger).fetchDiscoverKeywords(queryFor("ideas"));
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBe(ideasFixture.cost);
   });
 });
 
