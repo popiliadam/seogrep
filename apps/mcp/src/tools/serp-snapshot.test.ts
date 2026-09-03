@@ -24,6 +24,7 @@ import {
   serpSnapshotCredits,
 } from "./serp-snapshot.ts";
 import { formatSerpSnapshot } from "./serp-snapshot-format.ts";
+import { AI_FAN_OUT_NOTE } from "./serp-features.ts";
 import {
   MAX_STORED_PLACEMENTS,
   bestPlacement,
@@ -609,5 +610,84 @@ describe("what the answer says (NEVER #7)", () => {
     const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
     expect(text).toContain("1 measurement recorded");
     expect(text).toContain("keyword_positions");
+  });
+});
+
+/**
+ * S-1 — THE PAGE'S OWN FEATURES, WHICH WERE PARSED, STORED AND PAID FOR AND PRINTED NOWHERE.
+ *
+ * `vendor_item_types` reaches `report.vendor_page.item_types` (serp-snapshot-store.ts:134) and no
+ * surface in the product read it back: `grep -i item_types` matched zero lines in either
+ * formatter, and the web Rankings page skips `report` on purpose. So AI Overview presence was
+ * measured on every paid snapshot and visible to nobody (R-5.5 / R-8.4 / R-8.5).
+ */
+describe("the SERP features the page carried (S-1)", () => {
+  /** The real capture carries a featured snippet and a PAA block, and no AI Overview. */
+  it("names the features the vendor reported beside the organic results", async () => {
+    const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(text).toContain("featured_snippet");
+    expect(text).toContain("people_also_ask");
+  });
+
+  it("says no AI Overview was reported when the vendor reported none", async () => {
+    const text = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(text).toMatch(/No AI Overview reported/);
+    expect(text).not.toMatch(/AI Overview PRESENT/);
+  });
+
+  /**
+   * The DONE-WHEN of the AI half, and the phrase is chosen so it cannot be satisfied by the
+   * negative branch: "AI Overview" alone is a substring of "No AI Overview reported" too, and an
+   * assertion on it would pass over a page this tool said had none (signed lesson 11).
+   */
+  it("reports an AI Overview when the vendor put one on the page", async () => {
+    const text = await textFor(
+      fixtureWithResult({
+        item_types: ["organic", "ai_overview_video_element"],
+      }),
+    );
+    expect(text).toMatch(/AI Overview PRESENT/);
+    expect(text).toContain("ai_overview_video_element");
+  });
+
+  /** R-8.5's own risk, exercised with a name that exists nowhere but in this test. */
+  it("carries an item type nobody has written down through to the answer", async () => {
+    const text = await textFor(
+      fixtureWithResult({ item_types: ["organic", "invented_serp_feature_element"] }),
+    );
+    expect(text).toContain("invented_serp_feature_element");
+  });
+
+  /**
+   * R-5.5. The caveat rides with the CLAIM, so it appears exactly when an AI Overview was
+   * reported and not otherwise — a note printed on every answer is a note nobody reads, and a
+   * claim printed without it invites "we are in the AI Overview", which this never measured.
+   */
+  it("qualifies an AI Overview claim with the query fan-out it cannot see", async () => {
+    const withAi = await textFor(fixtureWithResult({ item_types: ["organic", "ai_overview"] }));
+    expect(withAi).toContain(AI_FAN_OUT_NOTE);
+    const withoutAi = formatSerpSnapshot('"rival-one-fixture.test"', await snapshotOf());
+    expect(withoutAi).not.toContain(AI_FAN_OUT_NOTE);
+  });
+
+  /**
+   * A NON-MEASUREMENT HAS NO PAGE, so it gets no feature line. Printing "none reported" there
+   * would be the same collapse the three outcomes exist to prevent: an absence of knowledge
+   * rendered as knowledge of an absence.
+   */
+  it("prints no feature line for a keyword that was never measured", async () => {
+    const port = createMockSerpSnapshotPort(NO_RESULT_ENVELOPE, CLOCK);
+    const text = formatSerpSnapshot(
+      '"x.test"',
+      await port.fetchSerpSnapshot({
+        target_domain: "x.test",
+        keywords: ["k"],
+        location_name: "United States",
+        language_code: "en",
+        device: "desktop",
+      }),
+    );
+    expect(text).toContain("NOT MEASURED");
+    expect(text).not.toMatch(/SERP features besides organic/);
   });
 });
