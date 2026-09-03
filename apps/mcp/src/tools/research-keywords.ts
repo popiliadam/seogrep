@@ -325,7 +325,15 @@ export function formatKeywordOverview(
   return (
     `Search volume for ${lines.length} keyword${lines.length === 1 ? "" : "s"} ` +
     `(language ${input.language_code}, location ${input.location_code}), ` +
-    `${thousands(totalVolume)} total monthly searches${missingNote}:\n${lines.join("\n")}` +
+    // RK-2. THE ONLY NUMBER ON THIS PAGE NOBODY MEASURED. Every addend is a figure Google rounded
+    // (R-8.9 — SEARCH_VOLUME_NOTE below says so), and R-8.9 states in as many words that rounded
+    // volumes do not add up; so this sum is the product's own arithmetic over vendor estimates,
+    // not something DataForSEO reported. It is KEPT — an order of magnitude readers already use —
+    // and it now says what it is instead of standing beside per-row vendor figures wearing the
+    // same confident voice. No error bar is offered with it: the rounding granularity Google
+    // applies is not published, so any "±" here would be a second invented number (NEVER #7).
+    `≈${thousands(totalVolume)} total monthly searches (approximate — a sum of rounded ` +
+    `figures)${missingNote}:\n${lines.join("\n")}` +
     (freshness === null ? "" : `\n${freshness}`) +
     // R-8.9, from the constant four tools share (format/search-volume.ts). It goes at the END,
     // beside the freshness line, because it is a caveat about numbers the reader has just read —
