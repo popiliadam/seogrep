@@ -103,7 +103,7 @@ yeniden açılmaması bu turda **kasıtlı bir kısıt** olarak taşındı ve di
 Ders 7: yeşil kapı NE ölçtüğüyle raporlanır. Aşağıdakiler bu turda **ölçülmedi**, ve hiçbiri "geçti"
 diye sayılmamıştır.
 
-1. **#217 canlıda hiç görülmedi.** PR CI'da; merge ve deploy olmadan bu dosyadaki her `KAPANDI #217`
+1. **#217 canlıda henüz görülmedi.** Merge edildi (`bbc259d`), deploy sürüyor; deploy olmadan bu dosyadaki her `KAPANDI #217`
    satırı **bir birim-testi iddiasıdır**. Özellikle sayfalamanın gerçek GSC'de 25.000'lik sayfa
    döndürdüğü, bayt bütçesinin dentnotion'da nerede bağladığı ve yeni cümlelerin canlı metni
    ölçülmedi. **Canlıda ölçülen tek şey #215/#216'dır** (deploy `aa52154`, iki bulgu).
