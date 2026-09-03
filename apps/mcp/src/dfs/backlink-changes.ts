@@ -152,10 +152,36 @@ export function formatVendorDate(date: Date): string {
 }
 
 /**
+ * `months` whole calendar months back from `date`, in UTC, CLAMPED to the last day of the month
+ * it lands in.
+ *
+ * The clamp is the point, and it is here because the obvious spelling is wrong. Plain
+ * `setUTCMonth(m - n)` OVERFLOWS instead of clamping: 31 March minus one month is "31 February",
+ * which `Date` resolves forward to 3 March. MEASURED 2026-09-04 (record B-2): `windowStart`
+ * returned `2026-03-03` for 2026-03-31/month/1 — four weeks SHORTER than the advertised window —
+ * and `2023-03-01` for 2024-02-29/year/1. Every run landing on the 29th-31st of a month bought a
+ * different window than the one the caller was told they bought, and `month` is the DEFAULT
+ * grouping.
+ *
+ * Day 0 of the following month is the last day of the target month, and that is the only value
+ * the day of the month is allowed to become.
+ */
+function monthsBackUtc(date: Date, months: number): Date {
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth() - months;
+  const lastDayOfTargetMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(date.getUTCDate(), lastDayOfTargetMonth)));
+}
+
+/**
  * The `date_from` for a window of `periods` groups ending at `dateTo`, in UTC, clamped to the
  * vendor's history start. Deliberately calendar arithmetic rather than "periods x 30 days": the
  * vendor groups by real months and years, and a fixed-length approximation would ask for a
  * different window than the one the tool advertises.
+ *
+ * The month and year axes run through {@link monthsBackUtc}, which clamps the day of the month —
+ * see that function for the overflow this used to have and the dates it was measured on. Days and
+ * weeks are fixed-length by definition and need no clamp.
  */
 export function windowStart(
   dateTo: Date,
@@ -163,13 +189,17 @@ export function windowStart(
   periods: number,
 ): string {
   const span = clampPeriods(periods);
-  const start = new Date(
+  const midnight = new Date(
     Date.UTC(dateTo.getUTCFullYear(), dateTo.getUTCMonth(), dateTo.getUTCDate()),
   );
-  if (groupRange === "day") start.setUTCDate(start.getUTCDate() - (span - 1));
-  else if (groupRange === "week") start.setUTCDate(start.getUTCDate() - span * 7);
-  else if (groupRange === "month") start.setUTCMonth(start.getUTCMonth() - span);
-  else start.setUTCFullYear(start.getUTCFullYear() - span);
+  let start: Date;
+  if (groupRange === "month") start = monthsBackUtc(midnight, span);
+  else if (groupRange === "year") start = monthsBackUtc(midnight, span * 12);
+  else {
+    start = new Date(midnight);
+    // `day` is inclusive of both ends, which is how DataForSEO documents daily grouping.
+    start.setUTCDate(start.getUTCDate() - (groupRange === "day" ? span - 1 : span * 7));
+  }
   const asText = formatVendorDate(start);
   return asText < DFS_BACKLINKS_HISTORY_START ? DFS_BACKLINKS_HISTORY_START : asText;
 }
