@@ -9,6 +9,8 @@ import {
   type BacklinkProfilePoint,
 } from "../dfs/backlink-changes.ts";
 import {
+  PARTIAL_BUCKET_MARKER,
+  PARTIAL_BUCKET_NOTE,
   SERIES_DO_NOT_RECONCILE_NOTE,
   formatBacklinkChanges,
   makeBacklinkChangesTool,
@@ -216,6 +218,90 @@ describe("formatBacklinkChanges", () => {
 
   it("does NOT invent a project for a bare-target lookup", () => {
     expect(formatBacklinkChanges(history([CHANGE], [PROFILE]))).not.toContain("your project");
+  });
+});
+
+// =============================================================================================
+// B-4 (record backlink_changes.md, 2026-09-04) — THE THIRD MEANING OF A PRINTED ZERO.
+//
+// MEASURED in BOTH live calls of that round, run on 2026-09-03: the last bucket came back
+// labelled 2026-09-30 (monthly) and 2026-09-06 (weekly) — dates in the FUTURE — carrying
+// `0 new / 0 lost` and a profile line repeating the previous bucket's figures verbatim.
+//
+// The tool already separates the vendor's own 0 ("nothing happened") from a missing field
+// ("the vendor declined to say", printed n/a). The third case — "this period has not ended
+// yet" — had no wording anywhere: `grep -rniI "incomplete|partial bucket|current bucket|in
+// progress"` over the tool, the port and the mdx returned 0.
+//
+// NOTHING IS DROPPED (NEVER #7): the vendor's bucket, its label and its figures all still
+// print. The only additions are a marker on the affected line and one sentence saying what it
+// means. The test injects `today` rather than reading the clock, so the assertion is about the
+// rule and not about the day the suite runs.
+// =============================================================================================
+describe("formatBacklinkChanges — the unfinished last bucket (B-4)", () => {
+  const TODAY = new Date("2026-09-03T22:00:00.000Z");
+  const finished: BacklinkChangePoint = { ...CHANGE, date: "2026-08-31 00:00:00 +00:00" };
+  const unfinished: BacklinkChangePoint = {
+    ...CHANGE,
+    date: "2026-09-30 00:00:00 +00:00",
+    new_backlinks: 0,
+    lost_backlinks: 0,
+    new_referring_domains: 0,
+    lost_referring_domains: 0,
+  };
+  const finishedProfile: BacklinkProfilePoint = { ...PROFILE, date: "2026-08-31 00:00:00 +00:00" };
+  const unfinishedProfile: BacklinkProfilePoint = {
+    ...PROFILE,
+    date: "2026-09-30 00:00:00 +00:00",
+  };
+
+  it("marks a bucket dated after today as partial, in BOTH series", () => {
+    const text = formatBacklinkChanges(
+      history([finished, unfinished], [finishedProfile, unfinishedProfile]),
+      null,
+      TODAY,
+    );
+    const lines = text.split("\n").filter((line) => line.startsWith("•"));
+    const marked = lines.filter((line) => line.includes(PARTIAL_BUCKET_MARKER));
+    expect(marked).toHaveLength(2);
+    expect(marked.every((line) => line.includes("2026-09-30"))).toBe(true);
+  });
+
+  it("keeps the vendor's own label and figures on the marked line — nothing is dropped", () => {
+    const text = formatBacklinkChanges(history([finished, unfinished], []), null, TODAY);
+    expect(text).toContain("2026-09-30");
+    expect(text).toContain("0 new / 0 lost backlinks");
+    // The pre-fix output was exactly this line WITHOUT the marker; the count is still 2 buckets.
+    expect(text).toContain("2 month buckets");
+  });
+
+  it("explains the marker once, and only when a bucket actually carries it", () => {
+    const withPartial = formatBacklinkChanges(
+      history([finished, unfinished], [finishedProfile, unfinishedProfile]),
+      null,
+      TODAY,
+    );
+    expect(withPartial.split(PARTIAL_BUCKET_NOTE)).toHaveLength(2);
+    const withoutPartial = formatBacklinkChanges(
+      history([finished], [finishedProfile]),
+      null,
+      TODAY,
+    );
+    expect(withoutPartial).not.toContain(PARTIAL_BUCKET_NOTE);
+    expect(withoutPartial).not.toContain(PARTIAL_BUCKET_MARKER);
+  });
+
+  it("says nothing about a bucket dated today or earlier — only a FUTURE label is provable", () => {
+    const todayBucket: BacklinkChangePoint = { ...CHANGE, date: "2026-09-03 00:00:00 +00:00" };
+    const text = formatBacklinkChanges(history([todayBucket], []), null, TODAY);
+    expect(text).not.toContain(PARTIAL_BUCKET_MARKER);
+  });
+
+  it("leaves a bucket alone when the vendor's label is not a date it can read", () => {
+    const odd: BacklinkChangePoint = { ...CHANGE, date: "sometime in September" };
+    const text = formatBacklinkChanges(history([odd], []), null, TODAY);
+    expect(text).toContain("sometime in September");
+    expect(text).not.toContain(PARTIAL_BUCKET_MARKER);
   });
 });
 
