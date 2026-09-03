@@ -12,6 +12,11 @@ import {
 } from "../dfs/competitors.ts";
 import { parseRankedKeywordsResponse } from "../dfs/ranked-keywords.ts";
 import {
+  DEFAULT_LANGUAGE_CODE,
+  DEFAULT_LOCATION_CODE,
+  defaultLocaleWarning,
+} from "../format/locale-default.ts";
+import {
   formatCompetitorComparison,
   makeCompareCompetitorsTool,
   normalizeCompetitors,
@@ -359,6 +364,65 @@ describe("formatCompetitorComparison", () => {
   it("echoes the language and location the numbers were read for", () => {
     const text = formatCompetitorComparison(DISCOVERED, { language_code: "de", location_code: 2276 });
     expect(text).toContain("(language de, location 2276)");
+  });
+});
+
+// =============================================================================================
+// C-1 (record compare_competitors.md, 2026-09-04) — THE FIFTH MEMBER OF THE DEFAULT-LOCALE
+// CLASS, and the most expensive surface in it at 90 credits.
+//
+// The class was closed as "four tools" in #223 (my_pages, keyword_gap, discover_keywords beside
+// ranked_keywords' own older trigger); this tool was never counted. MEASURED live 2026-09-04: a
+// `.com.tr` project with no locale argument printed `(language en, location 2840)` and came back
+// with 3 organic SERPs, where the same domain pair measured under `tr`/`2792` had produced 121
+// intersecting keywords. The locale was DISCLOSED — that half is already pinned above — but
+// never QUESTIONED.
+//
+// THE DEFAULT IS NOT CHANGED HERE. Which locale a paid lookup runs in is a behaviour-and-price
+// decision with an operator's name on it (format/locale-default.ts module header), and the last
+// spec below pins that it did not move. What is added is the SAME shared sentence the siblings
+// print — not a fifth wording of it — with the RESOLVED domain as its subject: on a
+// project-scoped call the caller never typed a domain at all, which is exactly when a US default
+// is least likely to have been a decision.
+// =============================================================================================
+describe("compare_competitors — the default-locale warning (C-1)", () => {
+  const tr = (comparison: CompetitorComparison): CompetitorComparison => ({
+    ...comparison,
+    target: "adstark.com.tr",
+    rows: comparison.rows.map((row, index) =>
+      index === 0 ? { ...row, domain: "adstark.com.tr" } : row,
+    ),
+  });
+
+  it("warns when a country-code TLD was compared on the default locale", () => {
+    const text = formatCompetitorComparison(tr(DISCOVERED), WHERE);
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", WHERE));
+    expect(text).toMatch(/\.tr domain/);
+  });
+
+  it("warns on the THIN answer too — where the wrong locale looks most like a fact", () => {
+    // Discovery that found nothing: the reply a caller reads as "this domain has no rivals".
+    const text = formatCompetitorComparison(
+      tr({ ...DISCOVERED, discovered_total_count: 0, rows: [DISCOVERED.rows[0]!] }),
+      WHERE,
+    );
+    expect(text).toContain("DataForSEO has no competitors on record for this domain");
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", WHERE));
+  });
+
+  it("says nothing on a .com, and nothing once the caller chose a locale", () => {
+    expect(formatCompetitorComparison(DISCOVERED, WHERE)).not.toMatch(/country-code TLD/);
+    expect(
+      formatCompetitorComparison(tr(DISCOVERED), { language_code: "tr", location_code: 2792 }),
+    ).not.toMatch(/country-code TLD/);
+  });
+
+  it("does NOT change the default it warns about — the schema still resolves to en/2840", () => {
+    const schema = makeCompareCompetitorsTool().inputJsonSchema as {
+      properties: Record<string, { default?: unknown }>;
+    };
+    expect(schema.properties.language_code?.default).toBe(DEFAULT_LANGUAGE_CODE);
+    expect(schema.properties.location_code?.default).toBe(DEFAULT_LOCATION_CODE);
   });
 });
 

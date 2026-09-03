@@ -364,6 +364,53 @@ describe("windowStart", () => {
       windowStart(TO, "day", MAX_BACKLINK_CHANGES_PERIODS),
     );
   });
+
+  // =========================================================================================
+  // B-2 (record backlink_changes.md, 2026-09-04) — THE INPUT AXIS, not the coverage axis.
+  //
+  // Every spec above measures ONE date, 2026-08-18, which is the middle of a month. A month-end
+  // date takes a different path through `Date`: plain `setUTCMonth` OVERFLOWS instead of
+  // clamping, so 31 March minus one month is "31 February", which JS resolves forward to 3
+  // March. MEASURED BEFORE THE FIX: 2026-03-31/month/1 -> 2026-03-03 (four weeks short of the
+  // advertised window), 2026-05-31/month/3 -> 2026-03-03, 2026-08-31/month/6 -> 2026-03-03,
+  // 2024-02-29/year/1 -> 2023-03-01. `month` is the DEFAULT grouping and the 29th-31st is
+  // roughly three days in ten, so this was a paid lookup asking for a window other than the one
+  // the tool advertises.
+  //
+  // These specs are DOUBLE-ENDED on purpose (signed lesson 14): the pre-fix values are named
+  // above so the defect stays legible, and the post-fix values are pinned below so the clamp
+  // cannot be silently removed again. Dropping the `Math.min` in `monthsBackUtc` turns this
+  // block red.
+  // =========================================================================================
+  describe("month-end and leap-day dates (B-2)", () => {
+    it("clamps to the target month's last day instead of overflowing into the next one", () => {
+      // 31 March back one month: February 2026 has 28 days, so the 31st becomes the 28th.
+      expect(windowStart(new Date("2026-03-31T00:00:00.000Z"), "month", 1)).toBe("2026-02-28");
+      // 31 May back three months, and 31 August back six: the same February.
+      expect(windowStart(new Date("2026-05-31T23:59:59.000Z"), "month", 3)).toBe("2026-02-28");
+      expect(windowStart(new Date("2026-08-31T12:00:00.000Z"), "month", 6)).toBe("2026-02-28");
+      // 31 October back eleven months: November 2025 has 30 days.
+      expect(windowStart(new Date("2026-10-31T00:00:00.000Z"), "month", 11)).toBe("2025-11-30");
+    });
+
+    it("keeps the day of the month whenever the target month is long enough", () => {
+      // The clamp must not fire when it is not needed: December has 31 days.
+      expect(windowStart(new Date("2026-01-31T00:00:00.000Z"), "month", 1)).toBe("2025-12-31");
+      expect(windowStart(new Date("2026-08-31T00:00:00.000Z"), "month", 12)).toBe("2025-08-31");
+    });
+
+    it("walks a leap day back to a real date on the year axis", () => {
+      // 29 February 2024 minus one year is not 29 February 2023 — that date does not exist.
+      expect(windowStart(new Date("2024-02-29T00:00:00.000Z"), "year", 1)).toBe("2023-02-28");
+      // ...and minus four years it DOES exist, so the clamp must leave it alone.
+      expect(windowStart(new Date("2024-02-29T00:00:00.000Z"), "year", 4)).toBe("2020-02-29");
+    });
+
+    it("still walks whole days and whole weeks, which never need the clamp", () => {
+      expect(windowStart(new Date("2026-03-31T00:00:00.000Z"), "day", 7)).toBe("2026-03-25");
+      expect(windowStart(new Date("2026-03-31T00:00:00.000Z"), "week", 4)).toBe("2026-03-03");
+    });
+  });
 });
 
 describe("estimateBacklinkChangesUsd", () => {

@@ -2598,6 +2598,13 @@ export const DOC_PROSE = {
           "happened\" or \"nothing recorded\" — the two are not distinguishable in this data, and " +
           "SeoGrep does not guess which one you are looking at. Only a field the vendor omits " +
           "entirely is printed as `n/a`.\n\n" +
+          "There is a **third** reading of a zero, and that one SeoGrep does tell you about. " +
+          "Because a bucket is labelled with the last day of its period, the final bucket of a " +
+          "series is often labelled today or later — its period has not finished. DataForSEO " +
+          "still returns a row for it, typically `0 new / 0 lost` with the profile line " +
+          "repeating the previous bucket. Those lines are marked **PARTIAL** and the output " +
+          "explains the marker once: the figures are what the vendor has so far, not a " +
+          "measurement of the whole period. On daily buckets this is every call, by definition.\n\n" +
           "History starts at **2019-01-30**, DataForSEO's own earliest date. A longer window " +
           "simply begins there.",
       },

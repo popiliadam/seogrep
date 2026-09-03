@@ -274,10 +274,17 @@ export const VENDOR_SPAM_SCORE_NOTE =
  *     also removes the wide window entirely, and 700 + 200 is not a taste: dfs/backlink-details.ts
  *     derives that pair from the SIGNED 35-credit price (5.40x worst-case margin against a 5.2x
  *     floor). Moving it moves a number NEVER #6 puts in a human's hands;
- *   • bounding the RENDERED TEXT keeps the wide window, keeps the price arithmetic untouched, and
- *     keeps the fetched rows — the run report written to domain_lookup_runs still records the
- *     whole window, so nothing measured is lost. The caller gets as many rows as one reply can
- *     hold plus an explicit statement of how many were fetched and not printed.
+ *   • bounding the RENDERED TEXT keeps the wide window and keeps the price arithmetic untouched.
+ *     The caller gets as many rows as one reply can hold plus an explicit statement of how many
+ *     were fetched and not printed, and can re-fetch the rest by advancing `offset`.
+ *     WHAT THE RUN REPORT DOES AND DOES NOT KEEP, corrected 2026-09-04 (record finding BD-2):
+ *     this bullet used to claim the report "still records the whole window, so nothing measured
+ *     is lost". It does not. dfs/runs.ts caps EVERY persisted list at MAX_RUN_ROWS = 50, this
+ *     tool's two lists included, so a `limit: 700` lookup keeps 50 rows and the pre-cap COUNTS
+ *     (`shown`, the vendor total) — a capped summary, not the window. The rows past the cap are
+ *     in neither the reply nor the report, and they were paid for. That does not overturn the
+ *     choice — narrowing the schema would still move a signed price — but the reason is
+ *     "unprinted rows are re-fetchable with `offset`", never "nothing is lost".
  * The second is what this formatter does. It is also the only one consistent with the corrected
  * `limit` description above: a narrower window does not cost less, so the answer to "too big to
  * read" cannot be "buy a smaller one".

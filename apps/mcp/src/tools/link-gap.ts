@@ -227,10 +227,17 @@ export function renderLinkGapRow(row: LinkGapRow, competitor: string): string {
  * already have it". The sibling tools have it because they read a DIFFERENT endpoint:
  * disavow_candidates and backlink_details both go through /backlinks/backlinks, whose rows are
  * individual LINKS and carry `url_from` / `url_to`. This tool's one paid request is
- * /backlinks/domain_intersection, whose entry carries `target`, `rank`, `backlinks`,
- * `first_seen`, `lost_date`, `backlinks_spam_score`, the broken/referring counters and the
- * `referring_links_*` breakdowns — and NO page URL of any kind. Checked against the vendor's
- * documented field list and against the parser in dfs/link-gap.ts, which throws nothing away.
+ * /backlinks/domain_intersection, whose entry describes a referring DOMAIN — its rank, its link
+ * counts, when it was first seen, its spam score and the vendor's own breakdowns — and carries
+ * NO page URL of any kind.
+ *
+ * WHERE THAT CLAIM RESTS, corrected 2026-09-04 (record finding B-2): on the vendor's DOCUMENTED
+ * field list for the endpoint. It used to rest here on "the parser in dfs/link-gap.ts, which
+ * throws nothing away", and that was measurably false against this repository's own fixture —
+ * `intersectionEntrySchema` reads the fields listed there, which is a subset of what the entry
+ * carries. A parser is evidence about what this tool RENDERS, never about what the vendor sends,
+ * and a comment that reads as a guarantee on an axis it never covered makes the claim above look
+ * checked when it was only asserted (signed lessons 12 and 16).
  *
  * So there are exactly three ways to put a URL on a row, and two of them are forbidden:
  *   • synthesise one from the domain ("https://<domain>") — a claim about a page nobody fetched,

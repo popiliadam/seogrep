@@ -22,6 +22,7 @@ import {
   writeDomainLookupRun,
   type DomainLookupRunWriter,
 } from "../dfs/runs.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
 import { normalizeDomain } from "./setup-project.ts";
 import {
   loadOwnProject,
@@ -489,10 +490,20 @@ export function formatCompetitorComparison(
   const note = sourced ? [WHOLE_DOMAIN_MEASUREMENT_NOTE] : [];
   return [
     renderHeading(comparison, input),
+    // C-1. The heading above DISCLOSES the locale; this names it as a default nobody chose.
+    // MEASURED 2026-09-04: a .com.tr project compared on en/2840 came back with 3 organic SERPs,
+    // where the same domain pair under tr/2792 had produced 121 intersecting keywords — 90
+    // credits spent measuring the United States. The DEFAULT is untouched (behaviour and price
+    // are an operator decision); it is named. Shared sentence, see format/locale-default.ts.
+    // The subject is the RESOLVED target, because a project_id call never typed a domain at all.
+    // It prints on the thin answer too, which is where a wrong locale reads most like a fact.
+    defaultLocaleWarning(comparison.target, input),
     ...blocks,
     ...renderDifferences(comparison),
     ...note,
-  ].join("\n\n");
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
 }
 
 /** A normalized competitor list, or the first rejection reason. */

@@ -152,22 +152,74 @@ export function sectionHeading(label: string, count: number, groupRange: string)
  * noise. Only a provably-zero UTC clock is dropped and nothing is re-labelled — see
  * {@link bucketDateLabel} for the narrow condition and for why a real time of day survives.
  */
-export function renderChangePoint(point: BacklinkChangePoint): string {
+export function renderChangePoint(point: BacklinkChangePoint, partial = false): string {
   return (
     `• ${bucketDateLabel(point.date)} — ${metric(point.new_backlinks)} new / ` +
     `${metric(point.lost_backlinks)} lost backlinks · ` +
     `${metric(point.new_referring_domains)} new / ` +
-    `${metric(point.lost_referring_domains)} lost referring domains`
+    `${metric(point.lost_referring_domains)} lost referring domains` +
+    (partial ? PARTIAL_BUCKET_MARKER : "")
   );
 }
 
 /** One bucket of the profile series, labelled by the same rule as the new/lost series. */
-export function renderProfilePoint(point: BacklinkProfilePoint): string {
+export function renderProfilePoint(point: BacklinkProfilePoint, partial = false): string {
   return (
     `• ${bucketDateLabel(point.date)} — ${metric(point.backlinks)} backlinks · ` +
     `${metric(point.referring_domains)} referring domains · ` +
-    `rank ${metric(point.rank)} of ${exactCount(BACKLINK_CHANGES_RANK_MAX)}`
+    `rank ${metric(point.rank)} of ${exactCount(BACKLINK_CHANGES_RANK_MAX)}` +
+    (partial ? PARTIAL_BUCKET_MARKER : "")
   );
+}
+
+/**
+ * =============================================================================================
+ * THE THIRD MEANING OF A PRINTED ZERO — a bucket whose period has not happened yet (B-4)
+ * =============================================================================================
+ * This tool already distinguishes two meanings of an empty cell: the vendor's own `0`, which is
+ * a measurement and prints as `0`, and a MISSING field, which is the vendor declining to say and
+ * prints as `n/a` (see {@link metric}). MEASURED 2026-09-04, in BOTH live calls of that round
+ * and run on 2026-09-03: DataForSEO closed each series with a bucket labelled with the period's
+ * END date — `2026-09-30` monthly, `2026-09-06` weekly — carrying `0 new / 0 lost`, with the
+ * profile line repeating the previous bucket's totals verbatim. Those are the vendor's honest
+ * figures for a period that has not finished, and read as "the site stopped gaining links".
+ *
+ * NOTHING IS REMOVED. The vendor's bucket, its label and its figures all still print — deleting
+ * or rewriting a vendor row is what NEVER #7 forbids. The line gets a marker and the answer gets
+ * one sentence.
+ *
+ * WHERE THE BOUNDARY IS: TODAY OR LATER, not strictly later. THE BUCKET LABEL IS THE END OF THE
+ * PERIOD rather than a point inside it — that is how both endpoints label a bucket, and it is
+ * what settles this comparison. A bucket labelled today covers a period that ENDS today, and at
+ * the moment the call is answered today is not over, which is precisely what the marker says.
+ * The first version of this rule compared strictly and defended it by calling such a bucket
+ * "only unfinished until midnight"; that read the label as an instant instead of a boundary. It
+ * also made the rule miss the case it most exists for: on `day` grouping the last bucket is
+ * labelled today on EVERY call, so the freshest line — the first one a reader looks at — was the
+ * one left unmarked.
+ */
+export const PARTIAL_BUCKET_MARKER = " — PARTIAL: this period has not ended yet";
+
+/** The one sentence that says what {@link PARTIAL_BUCKET_MARKER} means. Printed at most once. */
+export const PARTIAL_BUCKET_NOTE =
+  "One or more buckets above cover a period that has not finished: DataForSEO labels a bucket " +
+  "with the END of its period, and those labels are today or later. It still returns a row for " +
+  "such a bucket, and its figures are the ones it has so far — a 0 there is not a measurement of " +
+  "the whole period, and a profile line that repeats the previous bucket is not evidence that " +
+  "nothing changed. Compare complete buckets with complete buckets.";
+
+/**
+ * Whether a bucket's period has not ended: its vendor label — the END of the period — names
+ * today or a later date, in UTC. See {@link PARTIAL_BUCKET_MARKER} for why the boundary includes
+ * today.
+ *
+ * The label is read with its own regex rather than through `Date` parsing: an unrecognised label
+ * must mean "cannot tell", not "epoch", and a `NaN` date silently compares false to everything.
+ * The comparison is on the `yyyy-mm-dd` text, which sorts chronologically by construction.
+ */
+function isUnfinishedBucket(vendorDate: string, today: Date): boolean {
+  const day = /^(\d{4}-\d{2}-\d{2})\b/.exec(vendorDate)?.[1];
+  return day !== undefined && day >= today.toISOString().slice(0, 10);
 }
 
 /**
@@ -194,27 +246,39 @@ function renderNoHistory(changes: BacklinkChangesResult, project?: ProjectRef | 
   );
 }
 
-/** Render the two series as the plain-text tool output (pure — unit-tested directly). */
+/**
+ * Render the two series as the plain-text tool output (pure — unit-tested directly).
+ *
+ * `today` is a parameter rather than a call to the clock inside the renderer, so the unfinished-
+ * bucket rule (B-4) is a spec about the rule and not about the day the suite runs. Production
+ * passes nothing and gets the real now.
+ */
 export function formatBacklinkChanges(
   changes: BacklinkChangesResult,
   project?: ProjectRef | null,
+  today: Date = new Date(),
 ): string {
   if (changes.changes.length === 0 && changes.profile.length === 0) {
     return renderNoHistory(changes, project);
   }
+  const unfinished = (point: { readonly date: string }): boolean =>
+    isUnfinishedBucket(point.date, today);
   const blocks = [renderBacklinkChangesHeader(changes, project)];
   if (changes.changes.length > 0) {
     blocks.push(
       `${sectionHeading("New and lost", changes.changes.length, changes.group_range)}. ` +
         `${NEW_LOST_DEFINITION}:`,
-      changes.changes.map(renderChangePoint).join("\n"),
+      changes.changes.map((point) => renderChangePoint(point, unfinished(point))).join("\n"),
     );
   }
   if (changes.profile.length > 0) {
     blocks.push(
       `${sectionHeading("Profile at each bucket", changes.profile.length, changes.group_range)}:`,
-      changes.profile.map(renderProfilePoint).join("\n"),
+      changes.profile.map((point) => renderProfilePoint(point, unfinished(point))).join("\n"),
     );
+  }
+  if (changes.changes.some(unfinished) || changes.profile.some(unfinished)) {
+    blocks.push(PARTIAL_BUCKET_NOTE);
   }
   if (changes.changes.length > 0 && changes.profile.length > 0) {
     blocks.push(SERIES_DO_NOT_RECONCILE_NOTE);
