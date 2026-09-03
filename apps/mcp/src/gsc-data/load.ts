@@ -35,21 +35,71 @@ export type PullLoad =
 export const NO_PULL_MESSAGE =
   "No Search Console data found for this project. Run pull_gsc_data first.";
 
+/**
+ * The other half of that refusal, since B-4: the project has no Search Console connection at all,
+ * so "run pull_gsc_data first" is an instruction that cannot succeed.
+ *
+ * Measured live 2026-09-03 — a project whose own listing says "Search Console: not connected" was
+ * told to run pull_gsc_data, which then answered "Run connect_gsc first". Two paid-tool calls to
+ * arrive at a fact the caller's project list already printed.
+ */
+export const NOT_CONNECTED_MESSAGE =
+  "This project has no Search Console connection yet. Run connect_gsc first.";
+
 export type LoadPullFn = (userId: string, projectId: string) => Promise<PullLoad>;
 
 /**
- * Resolve the latest pull for (userId, projectId). A missing project, another tenant's
- * project, or a project never pulled all resolve to the same NO_PULL_MESSAGE — no
- * cross-tenant existence leak, and the message tells the caller exactly what to do next. A
- * stored result that will not parse is treated the same way. NOTE: a pull whose windows are
- * genuinely EMPTY (a property with no data) still loads ok — the analysis then reports "no
- * findings" over real, delivered data rather than pointing back at pull_gsc_data.
+ * Which of the two refusals a project with no pull deserves, from its connection state.
+ *
+ * BEST-EFFORT, and the fallback is the OLDER sentence. This read only chooses between two true
+ * statements — the refusal is correct either way — so a health lookup that cannot answer must not
+ * turn a designed refusal into a crash. The catch covers a synchronous throw as well as a rejected
+ * promise: a service client that cannot even open a statement throws before the promise exists,
+ * which is exactly what `findPriorAuditRun` was caught on (2026-09-03).
+ *
+ * NO EXISTENCE ORACLE IS OPENED. `loadGscTokenStatus` is tenant-scoped, so an unknown id, another
+ * tenant's project and an own project with no connection all read null and all get the same
+ * sentence; only a project that is BOTH this tenant's AND connected takes the other branch.
  */
-export async function loadLatestPull(userId: string, projectId: string): Promise<PullLoad> {
+async function noPullMessageFor(
+  userId: string,
+  projectId: string,
+  loadTokenStatus: LoadTokenStatusFn,
+): Promise<string> {
+  try {
+    return (await loadTokenStatus(userId, projectId)) === null
+      ? NOT_CONNECTED_MESSAGE
+      : NO_PULL_MESSAGE;
+  } catch {
+    return NO_PULL_MESSAGE;
+  }
+}
+
+/**
+ * Resolve the latest pull for (userId, projectId). A missing project, another tenant's project,
+ * or a project never pulled all resolve to the SAME sentence for a given connection state — no
+ * cross-tenant existence leak, and the message names the tool that can actually move the caller
+ * forward (B-4). A stored result that will not parse is treated the same way. NOTE: a pull whose
+ * windows are genuinely EMPTY (a property with no data) still loads ok — the analysis then reports
+ * "no findings" over real, delivered data rather than pointing back at pull_gsc_data.
+ *
+ * `loadTokenStatus` is a port for the reason every other reader here is one: the default reaches
+ * getServiceClient, which needs the full prod env, and both branches of B-4 have to be drivable
+ * without a database.
+ */
+export async function loadLatestPull(
+  userId: string,
+  projectId: string,
+  loadTokenStatus: LoadTokenStatusFn = loadGscTokenStatus,
+): Promise<PullLoad> {
+  const refuse = async (): Promise<PullLoad> => ({
+    ok: false,
+    error: await noPullMessageFor(userId, projectId, loadTokenStatus),
+  });
   const latest = await getLatestSucceededPull(getServiceClient(), projectId, userId);
-  if (!latest) return { ok: false, error: NO_PULL_MESSAGE };
+  if (!latest) return refuse();
   const pull = parsePullResult(latest.result);
-  if (!pull) return { ok: false, error: NO_PULL_MESSAGE };
+  if (!pull) return refuse();
   // The timestamp was already fetched (getLatestSucceededResult selects created_at) and then
   // dropped here. The three discovery tools sell an ANALYSIS of this pull; an undated analysis
   // cannot be told from a fresh one.

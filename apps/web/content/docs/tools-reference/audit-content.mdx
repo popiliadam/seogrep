@@ -48,6 +48,6 @@ Then one line per mismatching query — the query, the page ranking for it, its 
 
 ### Inherited limits
 
-This audit sees only what its two inputs brought back. A pull fetches at most **15,000** `(query, page)` rows per window, so on a large property a mismatch outside the top rows Google returned is not visible here — the analysis prints a caveat when the pull hit that cap. The window also ends **3 days before today** rather than running up to it. On the crawl side, only pages your last crawl actually reached can be checked, which is what the coverage line above is for.
+This audit sees only what its two inputs brought back. A pull stops at **100,000** `(query, page)` rows per window at the very most, and usually sooner at a storage budget measured on the rows themselves, so on a large property a mismatch outside the top rows Google returned is not visible here — the analysis names the row count the window was cut at when that happens. The window also ends **3 days before today** rather than running up to it. On the crawl side, only pages your last crawl actually reached can be checked, which is what the coverage line above is for.
 
 A mismatch is a statement about the page **as crawled**: a title you fixed after that crawl still shows up until you crawl again, which is why the crawl's own date is printed with the findings.

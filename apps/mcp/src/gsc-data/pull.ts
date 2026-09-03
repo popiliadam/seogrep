@@ -1,7 +1,7 @@
 import { refreshAccessToken, searchAnalyticsQuery } from "@pseo/core";
 import { countSearchAnalyticsRows, parseSearchAnalyticsRows } from "./rows.ts";
 import { computeWindows, type DateRange } from "./windows.ts";
-import type { PullData } from "./types.ts";
+import type { GscRow, PullData } from "./types.ts";
 
 /**
  * Orchestrate one pull: mint a fresh access token from the stored refresh token, then run
@@ -10,13 +10,10 @@ import type { PullData } from "./types.ts";
  * runs with ZERO network in tests (constitution NEVER #5) while production wires the real
  * @pseo/core client.
  *
- * v0 query shape (documented limitations, not bugs): dimensions are [query, page]; a single
- * page of results is fetched (startRow 0, rowLimit MAX_ROW_LIMIT) — a property with more
- * than MAX_ROW_LIMIT (query, page) rows in a window is truncated to the top rows Google
- * returns, which is acceptable for the discovery tools that read the pull. This is no longer
- * SILENT: a window whose row count fills the cap is flagged `capped` (below), and
- * format.ts's formatPullSummary surfaces a warning when that happens. Pagination can land
- * later without changing the stored shape.
+ * Query shape: dimensions are [query, page], and each window is fetched PAGE BY PAGE with
+ * `startRow` (R-7.2) until Google runs out of rows, the page ceiling is reached, or the stored
+ * result would outgrow its storage band. A window that stopped while Google still had more is
+ * flagged `capped`, and format.ts says so — with the row count it actually got.
  */
 
 /** The two Google calls a pull needs, as an injectable port (real adapter: defaultGscApi). */
@@ -32,38 +29,64 @@ export interface GscApi {
 }
 
 /**
- * Single-page row cap per window (startRow 0). Google allows up to 25,000 rows per request;
- * this is deliberately BELOW that maximum, and the number is a STORAGE budget, not a Google
- * one — the whole pull lands in one `jobs.result` jsonb blob, so the ceiling is whatever keeps
- * TWO windows of it inside the band the crawl slice already proved safe for a persisted result
- * (crawl.ts MAX_RESULT_BYTES = 12,000,000 B, whole result under ~14 MB).
+ * Rows asked for in ONE searchAnalytics.query — Google's documented maximum (R-7.2, valid range
+ * 1–25,000). Taking the maximum is free here: it decides how many ROUND TRIPS a window costs,
+ * not how much is kept, because what is kept is bounded by the byte budget below.
+ */
+export const PULL_PAGE_ROW_LIMIT = 25000;
+
+/** Hard ceiling on requests per window, so one pull can never become an unbounded crawl of GSC. */
+export const MAX_PULL_PAGES = 4;
+
+/**
+ * How many bytes of PARSED ROWS one window may keep. THIS is the rule that usually stops the
+ * loop, and it is a storage budget rather than a Google one: the whole pull lands in a single
+ * `jobs.result` jsonb blob, so BOTH windows have to fit inside the band the crawl slice already
+ * proved safe for a persisted result (crawl.ts MAX_RESULT_BYTES = 12,000,000 B) — hence half of
+ * it per window.
  *
  * Measured, not assumed — one stored row is `{query, page, clicks, impressions, ctr, position}`
  * and its JSON size (UTF-8 bytes) was measured across four row populations:
  *
- *   repo fixtures (short strings, rounded metrics)                    ~119 B
- *   typical live row (32-char query, 72-char URL, FULL float ctr)     ~212 B
- *   typical NON-ASCII row (Turkish long tail, multi-byte chars)       ~253 B
- *   pessimistic row (93-char question query, 160-char faceted URL)    ~360 B
+ * Re-measured 2026-09-03 (probe over `JSON.stringify(row)` + its comma, UTF-8), and these are the
+ * numbers the sentences below are built from — not the earlier estimates they replace:
  *
- * Two windows of N rows is then `219 B envelope + 2 * N * (row + 1)`:
+ *   repo fixture (short strings, rounded metrics)                     130 B → 46,154 rows/window
+ *   typical live row (32-char query, 72-char URL, FULL float ctr)     214 B → 28,037 rows/window
+ *   typical NON-ASCII row (Turkish long tail, multi-byte chars)       220 B → 27,273 rows/window
+ *   pessimistic row (93-char question query, 160-char faceted URL)    363 B → 16,529 rows/window
  *
- *   N = 25,000 → typical 9.05 MB · non-ASCII 12.70 MB · pessimistic 18.05 MB
- *   N = 20,000 → typical 7.24 MB · non-ASCII 10.16 MB · pessimistic 14.44 MB
- *   N = 15,000 → typical 5.43 MB · non-ASCII  7.62 MB · pessimistic 10.83 MB
+ * So the ceiling MOVES WITH THE DATA instead of being one row count chosen for the worst
+ * population and paid for by every other. The pessimistic row is not an outlier: the properties
+ * that actually fill a cap are large faceted sites whose URLs are long and whose queries are
+ * long-tail, so row count and row size rise together — which is exactly why the budget is measured
+ * on the rows themselves rather than counted.
  *
- * So Google's own 25,000 maximum is NOT taken: it puts the non-ASCII case over the 12 MB band
- * and the pessimistic case at 1.5x it. The pessimistic row is not an outlier here — it is the
- * population AT the ceiling, because the properties that actually fill a row cap are large
- * faceted sites whose URLs are long and whose queries are long-tail, so row count and row size
- * rise together. 15,000 is the round value that keeps even that case (10.83 MB) inside the
- * proven band, with ~11% headroom below the 16,620 rows/window where it would reach 12 MB —
- * and it is still 3x the 5,000 v0 ceiling that two live properties were measured pinned
- * against (docs/testing/2026-08-09-faz-b-tam-tur.md: one window returned 5000/5000).
+ * IT IS A HARD BOUND, NOT A CHECK BETWEEN PAGES, and that distinction was a real defect for one
+ * commit: testing the budget only AFTER a whole page had been appended let a 25,000-row page land
+ * intact, so the true worst case was 50,000 rows and 21.30 MB per pull — 1.8x the band the
+ * comment claimed to defend — and a pessimistic population blew it inside the FIRST page. The
+ * overflowing page is now CUT to what fits (`takeWithinBudget`), so 2 * PULL_WINDOW_BYTE_BUDGET
+ * = 12 MB is the arithmetic maximum a stored pull can reach, whatever the rows look like.
  *
- * Raising this is a one-line change; the pin test in pull.test.ts makes it a DELIBERATE one.
+ * WHAT THIS REPLACED, and the honest trade: the old ceiling was a single page of 15,000 rows per
+ * window, chosen for the pessimistic population. On 2026-09-03 the portfolio's largest property
+ * filled BOTH windows of a default pull (15000/15000) and three 10-credit analyses were sold on
+ * top of the truncated result. Pagination lifts a typical property to ~28,000 rows per window and
+ * a pessimistic one to ~16,500 — STORAGE IS UNCHANGED at the top end (the same 12 MB band, now
+ * enforced by measurement instead of by a conservative row count).
+ *
+ * Changing either number is a one-line change; the pin tests in pull.test.ts make it a
+ * DELIBERATE one.
  */
-export const MAX_ROW_LIMIT = 15000;
+export const PULL_WINDOW_BYTE_BUDGET = 6_000_000;
+
+/**
+ * The most rows one window can hold — the page ceiling, which is the ABSOLUTE bound. The byte
+ * budget above is what binds in practice, so this is the number the caveat prose is derived from
+ * and not a number any real pull is likely to reach.
+ */
+export const MAX_ROW_LIMIT = PULL_PAGE_ROW_LIMIT * MAX_PULL_PAGES;
 
 /** The default port over the real @pseo/core Google client (the production adapter). */
 export const defaultGscApi: GscApi = {
@@ -86,19 +109,93 @@ export interface RunPullInput {
   readonly reference: Date;
   /** The Google port (defaults to the real client). */
   readonly api?: GscApi;
-  /** Row cap per window (defaults to MAX_ROW_LIMIT). */
+  /** Rows per REQUEST (defaults to PULL_PAGE_ROW_LIMIT). */
   readonly rowLimit?: number;
 }
 
-/** Build the searchAnalytics.query request body for one window (Google's camelCase schema). */
-function queryBody(range: DateRange, rowLimit: number): Record<string, unknown> {
+/** Build the searchAnalytics.query request body for one page of one window (Google's schema). */
+function queryBody(range: DateRange, rowLimit: number, startRow: number): Record<string, unknown> {
   return {
     startDate: range.start_date,
     endDate: range.end_date,
     dimensions: ["query", "page"],
     rowLimit,
-    startRow: 0,
+    startRow,
   };
+}
+
+/** UTF-8 bytes one row occupies in the stored blob, plus the comma that joins it to the next. */
+function byteSizeOf(row: GscRow): number {
+  return Buffer.byteLength(JSON.stringify(row), "utf8") + 1;
+}
+
+/**
+ * As many of `rows` as fit in `remaining` bytes, with what they cost.
+ *
+ * THE CUT IS INSIDE THE PAGE, and that is the whole point of this function. Checking the budget
+ * only after appending a full page let a 25,000-row page land whole — the stored pull's real
+ * worst case was then 50,000 rows and 21.30 MB, against a 12 MB band, and a page of pessimistic
+ * rows overshot on its own. A budget that is tested after the spend is not a budget.
+ *
+ * Row by row rather than by an average: the populations that reach this are exactly the ones with
+ * outsized rows, so an average would be wrong in the direction that costs.
+ */
+function takeWithinBudget(
+  rows: readonly GscRow[],
+  remaining: number,
+): { kept: GscRow[]; bytes: number } {
+  const kept: GscRow[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    const size = byteSizeOf(row);
+    if (bytes + size > remaining) break;
+    kept.push(row);
+    bytes += size;
+  }
+  return { kept, bytes };
+}
+
+/**
+ * Fetch ONE window, page by page, and say whether Google still had more when we stopped.
+ *
+ * THREE STOPPING RULES, and which one fired decides `capped`:
+ *   1. Google's page came back SHORT — there is nothing more to ask for, so the window is
+ *      complete and `capped` is false. This is the only exit that is not a truncation.
+ *   2. The byte budget is reached. The usual one on a large property, and the one that keeps the
+ *      persisted blob inside its proven band.
+ *   3. MAX_PULL_PAGES requests have gone out. An absolute backstop so a pull can never become an
+ *      unbounded crawl of the Search Console API.
+ *
+ * `capped` is decided from the RAW response count, before parsing (parseSearchAnalyticsRows drops
+ * malformed rows, so a full page carrying one bad row would parse to rowLimit - 1 and read as
+ * "not capped" — the truncation warning switching itself off in precisely the case it exists
+ * for). `>=` rather than `===` for the same reason: a cap check must not be an equality that one
+ * unexpected row can step over.
+ */
+async function fetchWindow(
+  api: GscApi,
+  accessToken: string,
+  property: string,
+  range: DateRange,
+  rowLimit: number,
+): Promise<{ rows: GscRow[]; capped: boolean }> {
+  const rows: GscRow[] = [];
+  let bytes = 0;
+  for (let page = 0; page < MAX_PULL_PAGES; page += 1) {
+    const body = queryBody(range, rowLimit, page * rowLimit);
+    const response = await api.searchAnalyticsQuery(accessToken, property, body);
+    const parsed = parseSearchAnalyticsRows(response);
+    // BEFORE the append, never after: what does not fit is never stored, so the page that would
+    // have overshot is cut instead of kept whole.
+    const { kept, bytes: spent } = takeWithinBudget(parsed, PULL_WINDOW_BYTE_BUDGET - bytes);
+    rows.push(...kept);
+    bytes += spent;
+    // Rows were left on the floor — Google had more AND so did this page. Truncated, by us.
+    if (kept.length < parsed.length) return { rows, capped: true };
+    if (countSearchAnalyticsRows(response) < rowLimit) return { rows, capped: false };
+    if (bytes >= PULL_WINDOW_BYTE_BUDGET) return { rows, capped: true };
+  }
+  return { rows, capped: true };
 }
 
 /**
@@ -107,7 +204,7 @@ function queryBody(range: DateRange, rowLimit: number): Record<string, unknown> 
  */
 export async function runPull(input: RunPullInput): Promise<PullData> {
   const api = input.api ?? defaultGscApi;
-  const rowLimit = input.rowLimit ?? MAX_ROW_LIMIT;
+  const rowLimit = input.rowLimit ?? PULL_PAGE_ROW_LIMIT;
   const windows = computeWindows(input.reference, input.days);
 
   const { accessToken } = await api.refreshAccessToken(input.refreshToken);
@@ -125,8 +222,8 @@ export async function runPull(input: RunPullInput): Promise<PullData> {
   // thrown value deterministic and byte-identical to the sequential version, which surfaced the
   // current window's failure because it was simply the one that ran first.
   const [current, previous] = await Promise.allSettled([
-    api.searchAnalyticsQuery(accessToken, input.property, queryBody(windows.current, rowLimit)),
-    api.searchAnalyticsQuery(accessToken, input.property, queryBody(windows.previous, rowLimit)),
+    fetchWindow(api, accessToken, input.property, windows.current, rowLimit),
+    fetchWindow(api, accessToken, input.property, windows.previous, rowLimit),
   ]);
   // Re-throw the ORIGINAL error object (not a wrapper): the tool's invalid_grant / 403
   // classification reads its message and instanceof, so anything else would re-hide the two
@@ -137,23 +234,7 @@ export async function runPull(input: RunPullInput): Promise<PullData> {
   return {
     days: input.days,
     property: input.property,
-    // capped: Google returned as many rows as we asked for, so it may hold more (query, page)
-    // rows than were fetched — see the file header and formatPullSummary.
-    //
-    // Measured on the RAW response, before parsing. parseSearchAnalyticsRows drops malformed
-    // rows, so a window that truly filled the cap while carrying one bad row would parse to
-    // rowLimit - 1 and read as "not capped": the truncation warning would switch itself off in
-    // precisely the case it exists for. `>=` rather than `===` for the same reason — a cap check
-    // must not be an equality that one unexpected row can step over.
-    current: {
-      ...windows.current,
-      rows: parseSearchAnalyticsRows(current.value),
-      capped: countSearchAnalyticsRows(current.value) >= rowLimit,
-    },
-    previous: {
-      ...windows.previous,
-      rows: parseSearchAnalyticsRows(previous.value),
-      capped: countSearchAnalyticsRows(previous.value) >= rowLimit,
-    },
+    current: { ...windows.current, ...current.value },
+    previous: { ...windows.previous, ...previous.value },
   };
 }

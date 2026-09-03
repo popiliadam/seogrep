@@ -19,7 +19,7 @@ vi.mock("../db.ts", () => ({
   getServiceClient: () => ({}),
 }));
 
-const { loadLatestPull, renderPullProvenance, renderReauthWarning, NO_PULL_MESSAGE, STALE_PULL_DAYS } = await import("./load.ts");
+const { loadLatestPull, renderPullProvenance, renderReauthWarning, NOT_CONNECTED_MESSAGE, NO_PULL_MESSAGE, STALE_PULL_DAYS } = await import("./load.ts");
 const { SAMPLE_PULL } = await import("./fixtures.ts");
 const { pullResultToJson } = await import("./types.ts");
 
@@ -43,6 +43,66 @@ describe("loadLatestPull", () => {
 
     const out = await loadLatestPull("user-1", "project-1");
 
+    expect(out).toEqual({ ok: false, error: NO_PULL_MESSAGE });
+  });
+});
+
+/**
+ * B-4 — THE TWO-STEP DEAD END. Measured live 2026-09-03 on a project with no Search Console
+ * connection at all: find_quick_wins answered "Run pull_gsc_data first", the user does that, and
+ * pull_gsc_data answers "Run connect_gsc first". Two calls to be told the one thing their own
+ * project list already prints ("Search Console: not connected").
+ *
+ * THE EXISTENCE ORACLE SURVIVES, which is why the sentences split HERE and on THIS axis. Every
+ * unresolvable id — a typo, another tenant's project — reads as "no connection", the same answer
+ * an own project with no connection gets; only a project that IS this tenant's AND IS connected
+ * takes the other branch. So the pair of sentences distinguishes states of the caller's own
+ * account and nothing else.
+ */
+describe("loadLatestPull routes the refusal at the state the project is actually in (B-4)", () => {
+  const noPull = (status: (() => Promise<"active" | "invalid" | null>) | undefined) => {
+    getLatestSucceededPullMock.mockResolvedValueOnce(null);
+    return loadLatestPull("user-1", "project-1", status === undefined ? undefined : () => status());
+  };
+
+  it("points an UNCONNECTED project at connect_gsc, not at pull_gsc_data", async () => {
+    const out = await noPull(async () => null);
+    expect(out).toEqual({ ok: false, error: NOT_CONNECTED_MESSAGE });
+    expect(NOT_CONNECTED_MESSAGE).toContain("connect_gsc");
+    expect(NOT_CONNECTED_MESSAGE).not.toContain("pull_gsc_data");
+  });
+
+  it("still points a CONNECTED project with no pull at pull_gsc_data", async () => {
+    await expect(noPull(async () => "active")).resolves.toEqual({
+      ok: false,
+      error: NO_PULL_MESSAGE,
+    });
+    // A dead credential is still a connection: pull_gsc_data is where that diagnosis is made,
+    // and it names the reconnect itself.
+    await expect(noPull(async () => "invalid")).resolves.toEqual({
+      ok: false,
+      error: NO_PULL_MESSAGE,
+    });
+  });
+
+  /**
+   * FAIL-OPEN, and both shapes of failure. The connection read is an ADORNMENT on a refusal that
+   * is already correct — it only chooses which of two true sentences to print — so a health read
+   * that cannot answer must degrade to the older sentence rather than to a crash. The second case
+   * is the one findPriorAuditRun was caught on (2026-09-03): a client that cannot even open a
+   * statement throws BEFORE the promise exists, so a try that wraps only the await misses it.
+   */
+  it("falls back to the old sentence when the connection read rejects", async () => {
+    const out = await noPull(async () => {
+      throw new Error("connection reset");
+    });
+    expect(out).toEqual({ ok: false, error: NO_PULL_MESSAGE });
+  });
+
+  it("falls back when the connection read throws before it returns a promise at all", async () => {
+    // The mocked db.ts in this file hands out `{}` as the service client, so the REAL default
+    // reader's `.from(...)` is a synchronous TypeError — exactly the shape being guarded.
+    const out = await noPull(undefined);
     expect(out).toEqual({ ok: false, error: NO_PULL_MESSAGE });
   });
 });

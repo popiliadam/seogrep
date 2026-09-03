@@ -492,7 +492,9 @@ export function findConfirmFields(tools) {
 //      constant that MOVES away from the prose, not prose that was born detached from a constant.
 const INHERITED_LIMITS_INTRO =
   "This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought " +
-  "back. A pull fetches at most **{{MAX_GSC_ROWS}}** `(query, page)` rows per window, ";
+  "back. A pull pages through a window and stops at **{{MAX_GSC_ROWS}}** `(query, page)` rows " +
+  "at the very most — usually sooner, at a storage budget measured on the rows themselves, and " +
+  "the reply names the row count each window was cut at — ";
 
 const INHERITED_LIMITS_FRESHNESS =
   "Both windows also end **{{GSC_LAG_DAYS}} before today** rather than running up to it, so the " +
@@ -1052,9 +1054,15 @@ export const DOC_PROSE = {
           "the window and a run of zeros can still look like a drop. The trade-off: the newest " +
           "{{GSC_LAG_DAYS}} are not analyzed, so a genuine drop surfaces here up to " +
           "{{GSC_LAG_DAYS}} after it begins.\n" +
-          "- A single page of up to {{MAX_GSC_ROWS}} `(query, page)` rows is fetched per window; a " +
-          "very large property is truncated to the top rows Google returns, and the pull says so " +
-          "when it happens.",
+          "- Each window is fetched a page at a time until Search Console runs out of rows, four " +
+          "requests have gone out ({{MAX_GSC_ROWS}} rows, the absolute ceiling), or the rows fill " +
+          "what one stored pull can hold — a page that would overshoot is **cut** to what fits, so " +
+          "the limit is a hard bound rather than a check between pages. That storage budget is measured " +
+          "on the rows themselves, so a property with long URLs and long-tail queries stops at " +
+          "fewer rows than one with short ones — there is no single row number that is true for " +
+          "every site, which is why the reply names the count **your** window was cut at instead " +
+          "of quoting a cap. A window that was cut is flagged, here and in every analysis read " +
+          "from the pull.",
       },
     ],
   },
@@ -1085,7 +1093,16 @@ export const DOC_PROSE = {
       "you are still charged for the delivered analysis).\n\nEach page also carries **one recommended " +
       "next move**, derived from that page's own rows: which of its queries to push, from its current " +
       "position into the nearest band above it, and whether to widen the page to cover all the " +
-      "near-miss queries riding on it or tighten it around the single one.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "near-miss queries riding on it or tighten it around the single one.\n\nWhen a page is being " +
+      "**shown and not clicked** — its click-through rate is below what the rest of this shortlist " +
+      "earns — the recommendation says so and points you at the results page before the page " +
+      "itself. An AI Overview, a featured snippet or ads can be taking the click while your rank is " +
+      "fine, and two more positions do not win that back. Both rates are printed; nothing here " +
+      "claims what a given position \"should\" earn, because Google publishes no such figure.\n\n" +
+      "The list ends with one line saying what `position` is: Google reports it as an **average " +
+      "over the whole window**, not a rank on any single day, so a query that sat 5th for half the " +
+      "window and 16th for the other half reports the same figure as one that never moved — and " +
+      "the 8–20 band is applied to that average.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
       "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
       "plus a sentence once that is old, and — when your Search Console credential has stopped " +
       "working — a warning to reconnect.",
@@ -1141,7 +1158,13 @@ export const DOC_PROSE = {
       "positions and impressions that decision was read from. It is deliberately **omitted** when the " +
       "competing pages are within about half a SERP page of each other, or when a lower-ranking page " +
       "is earning more clicks than the better-ranked one — naming a keeper there would be a guess, and " +
-      "the wrong keeper means consolidating away the page that was working.\n\nEvery reply ends with the same four-line footer the other two " +
+      "the wrong keeper means consolidating away the page that was working.\n\nYour **home page is " +
+      "never the page it tells you to fold**. A home page ranks for many queries at once, so " +
+      "canonicalizing it into one of them trades away every other query it holds — and `rel=canonical` " +
+      "is a strong signal to Google rather than a setting you can cheaply take back. When your home " +
+      "page is one of the competitors it is named and explicitly left out of the decision; when it is " +
+      "the only page behind the leader there is no recommendation at all. It can still be the page you " +
+      "are told to **keep**.\n\nEvery reply ends with the same four-line footer the other two " +
       "discovery tools carry: the window that was analyzed against the one before it, a caveat " +
       "when either window hit the row cap, when the pull was taken plus a sentence once that is " +
       "old, and — when your Search Console credential has stopped working — a warning to " +
@@ -1179,14 +1202,32 @@ export const DOC_PROSE = {
     example:
       "Ask your MCP client in plain language:\n\n> Which pages on example.com are losing traffic?",
     returns:
-      "A list of decaying pages — each with its previous and current clicks, the clicks lost, and the " +
-      "drop as a percentage — biggest loss first, and not capped. If nothing is decaying, it says so " +
-      "(and you are still charged for the delivered analysis).\n\nEach page carries **what to do about " +
+      "A list of decaying pages — each with its previous and current clicks, the clicks lost, the " +
+      "drop as a percentage, and the page's **impressions and average position in both windows** — " +
+      "biggest loss first, and not capped. If nothing is decaying, it says so " +
+      "(and you are still charged for the delivered analysis).\n\nThose last two numbers are what " +
+      "separate the two ways a page loses clicks. Impressions down as well means the page lost " +
+      "**ranking**, and the instruction below is the right one. Impressions **held** while clicks fell " +
+      "means the page is still being shown and something on the results page took the click — an AI " +
+      "Overview, a featured snippet, an ad — and rewriting the page is not the answer to that. A page " +
+      "that stopped appearing has no position at all in the current window, and the reply says `not " +
+      "ranking` rather than printing a number.\n\nThe list ends with one line saying what `position` " +
+      "is: Google reports it as an **average over the whole window**, not a rank on any single day, so " +
+      "a page that sat 5th for half the window and 16th for the other half reports the same figure as " +
+      "one that never moved.\n\nEach page carries **what to do about " +
       "it**, and which of three instructions you get depends on how the page fell. A page down to no " +
       "clicks at all is told to verify it is still indexed, reachable and not redirected **before** " +
       "rewriting anything — that is also the shape a truncated pull manufactures. A page that lost " +
       "most of its clicks but not all is told to re-target rather than tweak. A page in the middle " +
-      "still ranks and still earns, so that one gets the refresh-and-internal-links advice.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "still ranks and still earns, so that one gets the refresh-and-internal-links advice.\n\nWhen a " +
+      "**published Google update** rolled out inside the period being compared, the reply says so " +
+      "**above** the list and names the update and its date. A core or spam update can move a whole " +
+      "site at once, and ten pages that all fell in the same week may be one event rather than ten " +
+      "content problems — so the note asks you to check whether many pages moved together before " +
+      "rewriting any of them. It says *may*, deliberately: Google publishes when an update rolled " +
+      "out, never what it did to your site. The dates come from Google's own status history and the " +
+      "reply tells you when that list was last checked, once it is old enough to be missing " +
+      "newer ones.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
       "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
       "plus a sentence once that is old, and — when your Search Console credential has stopped " +
       "working — a warning to reconnect.",
@@ -1530,10 +1571,11 @@ export const DOC_PROSE = {
       {
         heading: "Inherited limits",
         body:
-          "This audit sees only what its two inputs brought back. A pull fetches at most " +
-          "**{{MAX_GSC_ROWS}}** `(query, page)` rows per window, so on a large property a " +
+          "This audit sees only what its two inputs brought back. A pull stops at " +
+          "**{{MAX_GSC_ROWS}}** `(query, page)` rows per window at the very most, and usually " +
+          "sooner at a storage budget measured on the rows themselves, so on a large property a " +
           "mismatch outside the top rows Google returned is not visible here — the analysis " +
-          "prints a caveat when the pull hit that cap. The window also ends " +
+          "names the row count the window was cut at when that happens. The window also ends " +
           "**{{GSC_LAG_DAYS}} before today** rather than running up to it. On the crawl side, " +
           "only pages your last crawl actually reached can be checked, which is what the " +
           "coverage line above is for.\n\nA mismatch is a statement about the page **as " +

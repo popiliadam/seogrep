@@ -6,11 +6,9 @@ import { TOOL_COSTS, type ToolName } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
 import { recordSucceededPull } from "../queue/boss.ts";
 import {
-  analyzeContentDecay,
   detectCannibalization,
   findQuickWinsResult,
   formatCannibalization,
-  formatContentDecay,
   pullResultToJson,
 } from "../gsc-data/index.ts";
 import { SAMPLE_PULL } from "../gsc-data/fixtures.ts";
@@ -20,7 +18,7 @@ import {
   findQuickWinsTool,
 } from "./find-quick-wins.ts";
 import { detectCannibalizationTool } from "./detect-cannibalization.ts";
-import { analyzeContentDecayTool } from "./analyze-content-decay.ts";
+import { analyzeContentDecayTool, renderContentDecay } from "./analyze-content-decay.ts";
 import type { RegisteredTool } from "./registry.ts";
 
 /**
@@ -294,7 +292,13 @@ describe("the recorded run and the delivered text are the same measurement", () 
     {
       name: "analyze_content_decay" as ToolName,
       tool: analyzeContentDecayTool,
-      expected: formatContentDecay(analyzeContentDecay(SAMPLE_PULL)),
+      /**
+       * THROUGH THE TOOL'S OWN RENDERER, for the reason spelled out on find_quick_wins above —
+       * and this pin went red the day it mattered: B-1 put an algorithm-update note ABOVE the
+       * decay list, so `formatContentDecay` alone stopped being what the tool prints. A byte-pin
+       * that rebuilds the render by hand is a second source of truth that drifts silently.
+       */
+      expected: renderContentDecay(SAMPLE_PULL).text,
     },
   ])("$name prints exactly what its engine + formatter produce", async ({ tool, expected }) => {
     const ctx: AuthContext = { userId: (await makeUser()).id, keyId: `key-${randomUUID()}` };

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { analyzeContentDecay, DECAY_MIN_DROP_RATIO } from "./content-decay.ts";
 import { SAMPLE_PULL, gscRow, pullData } from "./fixtures.ts";
 import { GSC_FRESHNESS_LAG_DAYS, computeWindows, type DateRange } from "./windows.ts";
-import type { PullData } from "./types.ts";
+import type { GscRow, PullData } from "./types.ts";
 
 /**
  * Content decay = a page that lost a meaningful amount AND proportion of its clicks between
@@ -21,6 +21,88 @@ describe("analyzeContentDecay", () => {
       current_clicks: 30,
       clicks_lost: 30,
       drop_ratio: 0.5,
+      // B-2: the row Google sent carries impressions and position too, and the engine threw both
+      // away — so "I lost the ranking" and "I kept the ranking and lost the clicks" left this
+      // function as the same finding and got the same instruction.
+      previous_impressions: 640,
+      current_impressions: 600,
+      previous_position: 5.1,
+      current_position: 6.4,
+    });
+  });
+
+  /**
+   * B-2, THE TWO CASES THE OLD SHAPE COULD NOT TELL APART — measured live 2026-09-03, where ten
+   * decaying pages came back and not one carried an impression figure. R-7.12 is why this is not
+   * academic: AI Overview impressions are INSIDE these numbers while their clicks are not, so a
+   * page can hold every impression it had and still bleed clicks, and "refresh the content" is
+   * not the answer to a SERP change.
+   *
+   * TWO fixtures that are IDENTICAL on the click axis — both fall 80 → 20 — so anything reading
+   * clicks alone gives them the same answer, and this spec is the only thing separating them.
+   */
+  it("separates a page that lost its ranking from one that kept it and lost the clicks", () => {
+    const row = (over: Partial<GscRow>): GscRow =>
+      gscRow({ query: "q", page: "https://x.test/p", ...over });
+    const previous = [row({ clicks: 80, impressions: 1000, position: 4 })];
+
+    const lostRanking = analyzeContentDecay(
+      pullData([row({ clicks: 20, impressions: 200, position: 28 })], previous),
+    );
+    expect(lostRanking[0]).toMatchObject({
+      previous_impressions: 1000,
+      current_impressions: 200,
+      previous_position: 4,
+      current_position: 28,
+    });
+
+    const keptRanking = analyzeContentDecay(
+      pullData([row({ clicks: 20, impressions: 1000, position: 4.1 })], previous),
+    );
+    expect(keptRanking[0]).toMatchObject({
+      previous_impressions: 1000,
+      current_impressions: 1000,
+      previous_position: 4,
+      current_position: 4.1,
+    });
+    // The two are identical on the axis the engine used to read, which is the finding itself.
+    expect(lostRanking[0]?.clicks_lost).toBe(keptRanking[0]?.clicks_lost);
+  });
+
+  /**
+   * The average is IMPRESSION-WEIGHTED, the rule collapseFragments applies one level down
+   * (document.ts): Google's own position is already an impression-weighted mean over appearances,
+   * so a plain mean across a page's queries would invent a different kind of number. Here a plain
+   * mean reads 15.5 while the weighted one reads 3.25 — the position most impressions were at.
+   */
+  it("averages a page's position across its queries by impressions, not by row count", () => {
+    const pull = pullData(
+      [
+        gscRow({ query: "q1", page: "https://x.test/p", clicks: 2, impressions: 990, position: 3 }),
+        gscRow({ query: "q2", page: "https://x.test/p", clicks: 0, impressions: 10, position: 28 }),
+      ],
+      [gscRow({ query: "q1", page: "https://x.test/p", clicks: 40, impressions: 900, position: 2 })],
+    );
+    const [decay] = analyzeContentDecay(pull);
+    expect(decay?.current_position).toBeCloseTo(3.25, 10);
+    expect(decay?.current_impressions).toBe(1000);
+  });
+
+  /**
+   * A page that vanished from the current window has NO position there, and null is the honest
+   * value: 0 would read as "pinned at the top" (the fixtures file's own caveat), and carrying the
+   * previous window's number forward would claim a rank nobody measured.
+   */
+  it("reports no current position at all for a page that stopped appearing", () => {
+    const pull = pullData(
+      [],
+      [gscRow({ query: "q", page: "https://x.test/p", clicks: 40, impressions: 900, position: 6 })],
+    );
+    expect(analyzeContentDecay(pull)[0]).toMatchObject({
+      current_clicks: 0,
+      current_impressions: 0,
+      current_position: null,
+      previous_position: 6,
     });
   });
 
@@ -59,6 +141,12 @@ describe("analyzeContentDecay", () => {
         current_clicks: 10,
         clicks_lost: 70,
         drop_ratio: 0.875,
+        // This fixture models the CLICK axis only — its rows carry no impressions, and with no
+        // impressions there is no weight to average a position by, which is what null says.
+        previous_impressions: 0,
+        current_impressions: 0,
+        previous_position: null,
+        current_position: null,
       },
     ]);
   });
@@ -110,6 +198,12 @@ describe("analyzeContentDecay", () => {
         current_clicks: 2,
         clicks_lost: 38,
         drop_ratio: 0.95,
+        // This fixture models the CLICK axis only, so its rows carry no impressions — and with no
+        // impressions there is no weight to average a position by, which is what null says.
+        previous_impressions: 0,
+        current_impressions: 0,
+        previous_position: null,
+        current_position: null,
       },
     ]);
   });

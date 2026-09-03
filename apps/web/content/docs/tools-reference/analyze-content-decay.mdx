@@ -27,14 +27,20 @@ Ask your MCP client in plain language:
 
 ### Returns
 
-A list of decaying pages — each with its previous and current clicks, the clicks lost, and the drop as a percentage — biggest loss first, and not capped. If nothing is decaying, it says so (and you are still charged for the delivered analysis).
+A list of decaying pages — each with its previous and current clicks, the clicks lost, the drop as a percentage, and the page's **impressions and average position in both windows** — biggest loss first, and not capped. If nothing is decaying, it says so (and you are still charged for the delivered analysis).
+
+Those last two numbers are what separate the two ways a page loses clicks. Impressions down as well means the page lost **ranking**, and the instruction below is the right one. Impressions **held** while clicks fell means the page is still being shown and something on the results page took the click — an AI Overview, a featured snippet, an ad — and rewriting the page is not the answer to that. A page that stopped appearing has no position at all in the current window, and the reply says `not ranking` rather than printing a number.
+
+The list ends with one line saying what `position` is: Google reports it as an **average over the whole window**, not a rank on any single day, so a page that sat 5th for half the window and 16th for the other half reports the same figure as one that never moved.
 
 Each page carries **what to do about it**, and which of three instructions you get depends on how the page fell. A page down to no clicks at all is told to verify it is still indexed, reachable and not redirected **before** rewriting anything — that is also the shape a truncated pull manufactures. A page that lost most of its clicks but not all is told to re-target rather than tweak. A page in the middle still ranks and still earns, so that one gets the refresh-and-internal-links advice.
+
+When a **published Google update** rolled out inside the period being compared, the reply says so **above** the list and names the update and its date. A core or spam update can move a whole site at once, and ten pages that all fell in the same week may be one event rather than ten content problems — so the note asks you to check whether many pages moved together before rewriting any of them. It says *may*, deliberately: Google publishes when an update rolled out, never what it did to your site. The dates come from Google's own status history and the reply tells you when that list was last checked, once it is old enough to be missing newer ones.
 
 Every reply ends with the same footer: the window that was analyzed against the one before it, a caveat when either window hit the row cap, when the pull was taken plus a sentence once that is old, and — when your Search Console credential has stopped working — a warning to reconnect.
 
 ### Inherited limits
 
-This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought back. A pull fetches at most **15,000** `(query, page)` rows per window, and a page that fell out of a truncated window's top rows is read as having lost those clicks, so a large property can show a decay that never happened — the analysis prints a caveat when either window hit the cap.
+This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought back. A pull pages through a window and stops at **100,000** `(query, page)` rows at the very most — usually sooner, at a storage budget measured on the rows themselves, and the reply names the row count each window was cut at — and a page that fell out of a truncated window's top rows is read as having lost those clicks, so a large property can show a decay that never happened — the analysis prints a caveat when either window hit the cap.
 
 Both windows also end **3 days before today** rather than running up to it, so the newest days are not analyzed yet. See [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.
