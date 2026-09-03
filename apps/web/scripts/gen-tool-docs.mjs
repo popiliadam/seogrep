@@ -492,7 +492,9 @@ export function findConfirmFields(tools) {
 //      constant that MOVES away from the prose, not prose that was born detached from a constant.
 const INHERITED_LIMITS_INTRO =
   "This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought " +
-  "back. A pull fetches at most **{{MAX_GSC_ROWS}}** `(query, page)` rows per window, ";
+  "back. A pull pages through a window and stops at **{{MAX_GSC_ROWS}}** `(query, page)` rows " +
+  "at the very most — usually sooner, at a storage budget measured on the rows themselves, and " +
+  "the reply names the row count each window was cut at — ";
 
 const INHERITED_LIMITS_FRESHNESS =
   "Both windows also end **{{GSC_LAG_DAYS}} before today** rather than running up to it, so the " +
@@ -1052,9 +1054,14 @@ export const DOC_PROSE = {
           "the window and a run of zeros can still look like a drop. The trade-off: the newest " +
           "{{GSC_LAG_DAYS}} are not analyzed, so a genuine drop surfaces here up to " +
           "{{GSC_LAG_DAYS}} after it begins.\n" +
-          "- A single page of up to {{MAX_GSC_ROWS}} `(query, page)` rows is fetched per window; a " +
-          "very large property is truncated to the top rows Google returns, and the pull says so " +
-          "when it happens.",
+          "- Each window is fetched a page at a time until Search Console runs out of rows, four " +
+          "requests have gone out ({{MAX_GSC_ROWS}} rows, the absolute ceiling), or the rows " +
+          "collected would outgrow what one stored pull can hold. That storage budget is measured " +
+          "on the rows themselves, so a property with long URLs and long-tail queries stops at " +
+          "fewer rows than one with short ones — there is no single row number that is true for " +
+          "every site, which is why the reply names the count **your** window was cut at instead " +
+          "of quoting a cap. A window that was cut is flagged, here and in every analysis read " +
+          "from the pull.",
       },
     ],
   },
@@ -1555,10 +1562,11 @@ export const DOC_PROSE = {
       {
         heading: "Inherited limits",
         body:
-          "This audit sees only what its two inputs brought back. A pull fetches at most " +
-          "**{{MAX_GSC_ROWS}}** `(query, page)` rows per window, so on a large property a " +
+          "This audit sees only what its two inputs brought back. A pull stops at " +
+          "**{{MAX_GSC_ROWS}}** `(query, page)` rows per window at the very most, and usually " +
+          "sooner at a storage budget measured on the rows themselves, so on a large property a " +
           "mismatch outside the top rows Google returned is not visible here — the analysis " +
-          "prints a caveat when the pull hit that cap. The window also ends " +
+          "names the row count the window was cut at when that happens. The window also ends " +
           "**{{GSC_LAG_DAYS}} before today** rather than running up to it. On the crawl side, " +
           "only pages your last crawl actually reached can be checked, which is what the " +
           "coverage line above is for.\n\nA mismatch is a statement about the page **as " +

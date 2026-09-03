@@ -288,7 +288,7 @@ describe("the delivered report", () => {
     const text = await textOf([], {
       pull: { ok: true, pull: capped, pulledAt: PULLED_AT, jobId: PULL_JOB_ID },
     });
-    expect(text).toMatch(/covers at most [\d,]+ rows per window/);
+    expect(text).toMatch(/truncated at the \w+ window at [\d,]+ rows/);
   });
 
   it("omits the crawl date line rather than blanking it when the crawl carried none", async () => {

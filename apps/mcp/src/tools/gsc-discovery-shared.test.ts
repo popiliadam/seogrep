@@ -122,8 +122,9 @@ describe("every discovery tool states the window it analyzed", () => {
 
 describe("every discovery tool flags a pull that hit the row cap", () => {
   const CAVEAT =
-    "Note: this analysis covers at most 15,000 rows per window — " +
-    "the pull hit that cap, so these results may be partial.";
+    "Note: the pull was truncated at the current window at 5 rows, so this analysis covers " +
+    "the top rows only and these results may be partial.";
+  const PREVIOUS_CAVEAT = "truncated at the previous window at 4 rows";
 
   const capped = (which: "current" | "previous"): PullData => ({
     ...SAMPLE_PULL,
@@ -143,13 +144,13 @@ describe("every discovery tool flags a pull that hit the row cap", () => {
    * Narrowing the condition to the current window alone keeps the case above green.
    */
   it.each(CASES)("$name carries the caveat when only the PREVIOUS window was truncated", async ({ render }) => {
-    expect(await textOf(render, capped("previous"))).toContain(CAVEAT);
+    expect(await textOf(render, capped("previous"))).toContain(PREVIOUS_CAVEAT);
   });
 
   /** THE COUNTERWEIGHT: an untruncated pull must not be branded partial. */
   it.each(CASES)("$name says nothing about a cap when neither window hit it", async ({ render }) => {
     const text = await textOf(render, SAMPLE_PULL);
-    expect(text).not.toMatch(/rows per window/i);
+    expect(text).not.toMatch(/truncated/i);
     expect(text).not.toMatch(/may be partial/i);
   });
 });
@@ -175,7 +176,7 @@ describe("the footer's shape", () => {
       .trimEnd()
       .split("\n");
     expect(lines.at(-3)).toMatch(/^Analyzed window: /);
-    expect(lines.at(-2)).toMatch(/^Note: this analysis covers at most /);
+    expect(lines.at(-2)).toMatch(/^Note: the pull was truncated at the /);
     expect(lines.at(-1)).toMatch(/^Search Console data pulled /);
   });
 });

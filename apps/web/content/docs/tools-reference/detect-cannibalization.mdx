@@ -43,6 +43,6 @@ Every reply ends with the same four-line footer the other two discovery tools ca
 
 ### Inherited limits
 
-This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought back. A pull fetches at most **15,000** `(query, page)` rows per window, and a truncated pull also truncates the denominator each impression **share** is measured against, so on a large property a page's share can read higher than it is — the analysis prints a caveat when the pull hit that cap.
+This analysis sees only what [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) brought back. A pull pages through a window and stops at **100,000** `(query, page)` rows at the very most — usually sooner, at a storage budget measured on the rows themselves, and the reply names the row count each window was cut at — and a truncated pull also truncates the denominator each impression **share** is measured against, so on a large property a page's share can read higher than it is — the analysis prints a caveat when the pull hit that cap.
 
 Both windows also end **3 days before today** rather than running up to it, so the newest days are not analyzed yet. See [`pull_gsc_data`](/docs/tools-reference/pull-gsc-data) for both limits in full.

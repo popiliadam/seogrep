@@ -1,7 +1,6 @@
 import type { CannibalGroup } from "./cannibalization.ts";
 import type { PageDecay } from "./content-decay.ts";
 import { isSiteRoot } from "./document.ts";
-import { MAX_ROW_LIMIT } from "./pull.ts";
 import type { PullData } from "./types.ts";
 
 /**
@@ -25,18 +24,32 @@ function grouped(value: number): string {
 }
 
 /**
- * One-line summary of a completed pull (row counts + the two window ranges).
+ * WHERE EACH WINDOW WAS CUT, or null when neither was — the shared subject of both truncation
+ * sentences below.
  *
- * The cap sentence DERIVES its number from MAX_ROW_LIMIT rather than spelling one out. The
- * literal it replaces (`5,000`) is what the ceiling used to be, and prose is exactly where a
- * changed constant goes unnoticed — nothing compiles against a sentence. A wrong number here is
- * worse than none: it tells the user how much data they are missing, and they have no way to
- * check it.
+ * IT NAMES THE ROWS ACTUALLY FETCHED rather than deriving a figure from a constant, and that is
+ * what B-2's pagination forced. There is no single ceiling left to name: a window stops at
+ * Google's last row, at the page ceiling, or at the storage budget — and the budget is measured
+ * on the rows themselves, so two properties truncate at different row counts and any constant in
+ * this prose would be wrong for at least one of them. The count printed is the count the reader's
+ * analysis actually holds, which is the one number they can check.
  */
+function describeTruncation(pull: PullData): string | null {
+  const cut = [
+    pull.current.capped ? `current window at ${grouped(pull.current.rows.length)} rows` : null,
+    pull.previous.capped ? `previous window at ${grouped(pull.previous.rows.length)} rows` : null,
+  ].filter((part): part is string => part !== null);
+  return cut.length === 0 ? null : cut.join(", ");
+}
+
+/** One-line summary of a completed pull (row counts + the two window ranges). */
 export function formatPullSummary(pull: PullData): string {
-  const capWarning = pull.current.capped || pull.previous.capped
-    ? `Note: this window hit the ${grouped(MAX_ROW_LIMIT)}-row cap — results cover the top rows only; comparisons may be partial.\n`
-    : "";
+  const cut = describeTruncation(pull);
+  const capWarning =
+    cut === null
+      ? ""
+      : `Note: truncated at the ${cut} — Search Console had more (query, page) rows than one ` +
+        "pull can store, so this covers the top rows only and comparisons may be partial.\n";
   return (
     `Pulled ${pull.days} days of Search Console data.\n` +
     `Current window ${pull.current.start_date}..${pull.current.end_date}: ` +
@@ -76,19 +89,20 @@ export function renderAnalyzedWindow(pull: PullData): string {
  * reads a page that fell out of the current window's top rows as current=0 and reports a
  * GHOST collapse, and every cannibalization share is computed against a truncated denominator.
  *
- * The number DERIVES from MAX_ROW_LIMIT, like formatPullSummary's: prose is exactly where a
- * changed constant goes unnoticed, and a wrong figure here tells the user how much data they
- * are missing with no way to check it.
+ * The figure is the window's OWN row count (describeTruncation), not a constant: since B-2 a
+ * window stops where Google, the page ceiling or the measured storage budget stops it, so there
+ * is no single ceiling that is true for every property.
  *
- * An OR over the two windows, deliberately: the previous window is the baseline every decay
- * number is measured against, so truncating IT inflates every "lost clicks" figure the tool
- * prints.
+ * BOTH windows are named when both were cut, deliberately: the previous window is the baseline
+ * every decay number is measured against, so truncating IT inflates every "lost clicks" figure
+ * the tool prints.
  */
 export function renderRowCapCaveat(pull: PullData): string | null {
-  if (!pull.current.capped && !pull.previous.capped) return null;
+  const cut = describeTruncation(pull);
+  if (cut === null) return null;
   return (
-    `Note: this analysis covers at most ${grouped(MAX_ROW_LIMIT)} rows per window — ` +
-    "the pull hit that cap, so these results may be partial."
+    `Note: the pull was truncated at the ${cut}, so this analysis covers the top rows only ` +
+    "and these results may be partial."
   );
 }
 

@@ -34,16 +34,17 @@ describe("formatPullSummary", () => {
 });
 
 /**
- * The cap warning. Its NUMBER is asserted as a literal on purpose: formatPullSummary derives it
- * from MAX_ROW_LIMIT, so an expectation built from the same constant would follow the ceiling
- * wherever it moved and prove only that the sentence contains a number. This half pins WHICH
- * number a user reads; pull.test.ts pins the constant itself. Either half alone catches a
- * ceiling that changed without its prose (the `5,000` this replaced was that drift, caught the
- * moment the ceiling actually moved).
+ * The truncation warning. Since B-2 a window is cut by whichever of THREE rules fires first
+ * (Google ran out, the page ceiling, the measured storage budget), so the sentence names the rows
+ * the window ACTUALLY holds rather than a ceiling constant — a constant would be wrong for every
+ * property that stopped somewhere else. That count is asserted as a literal here, and it comes
+ * from the fixture rather than from `rows.length`: an expectation computed the same way the
+ * renderer computes it would agree with any number the renderer produced.
  */
-describe("formatPullSummary surfaces the 15,000-row cap", () => {
+describe("formatPullSummary names where a truncated pull was cut", () => {
   const CAP_WARNING =
-    "Note: this window hit the 15,000-row cap — results cover the top rows only; comparisons may be partial.";
+    "Note: truncated at the current window at 5 rows — Search Console had more (query, page) " +
+    "rows than one pull can store, so this covers the top rows only and comparisons may be partial.";
 
   it("adds the cap warning when a window's rows filled the cap", () => {
     const capped: PullData = {
@@ -64,7 +65,8 @@ describe("formatPullSummary surfaces the 15,000-row cap", () => {
       current: { ...SAMPLE_PULL.current, capped: false },
       previous: { ...SAMPLE_PULL.previous, capped: true },
     };
-    expect(formatPullSummary(capped)).toContain(CAP_WARNING);
+    expect(formatPullSummary(capped)).toContain("truncated at the previous window at 4 rows");
+    expect(formatPullSummary(capped)).not.toContain("current window at");
   });
 
   it("omits the cap warning when neither window hit the cap", () => {
@@ -96,13 +98,13 @@ describe("renderAnalyzedWindow", () => {
 });
 
 /**
- * The row-cap caveat, on the ANALYSIS side. pull_gsc_data already warns at pull time
+ * The truncation caveat, on the ANALYSIS side. pull_gsc_data already warns at pull time
  * (formatPullSummary above), and that warning is days or weeks and one conversation away from
  * the analysis that reads the truncated rows.
  *
- * Its NUMBER is asserted as a literal for the same reason formatPullSummary's is: the renderer
- * derives it from MAX_ROW_LIMIT, so an expectation built from that constant would follow the
- * ceiling wherever it went and prove only that the sentence contains a number.
+ * Its numbers are asserted as literals for the same reason formatPullSummary's are: they come
+ * from the fixture, not from `rows.length`, so an expectation cannot agree with whatever the
+ * renderer happened to print.
  */
 describe("renderRowCapCaveat", () => {
   const capped = (which: "current" | "previous"): PullData => ({
@@ -111,17 +113,33 @@ describe("renderRowCapCaveat", () => {
     previous: { ...SAMPLE_PULL.previous, capped: which === "previous" },
   });
 
-  it("warns, with the 15,000 figure, when the CURRENT window hit the cap", () => {
+  it("warns, and names where the CURRENT window was cut", () => {
     expect(renderRowCapCaveat(capped("current"))).toBe(
-      "Note: this analysis covers at most 15,000 rows per window — " +
-        "the pull hit that cap, so these results may be partial.",
+      "Note: the pull was truncated at the current window at 5 rows, so this analysis covers " +
+        "the top rows only and these results may be partial.",
     );
   });
 
   it("warns when only the PREVIOUS window hit the cap — it is the decay baseline", () => {
     // Narrowing the condition to `pull.current.capped` alone keeps the case above green while
     // every "lost clicks" number measured against a truncated baseline goes out unflagged.
-    expect(renderRowCapCaveat(capped("previous"))).toMatch(/15,000 rows per window/);
+    expect(renderRowCapCaveat(capped("previous"))).toContain("previous window at 4 rows");
+  });
+
+  /**
+   * BOTH, named separately. A renderer that reported only the first cut window would leave the
+   * reader of a doubly-truncated pull — the shape measured live on 2026-09-03 — believing the
+   * other window was whole.
+   */
+  it("names both windows when both were cut", () => {
+    const both: PullData = {
+      ...SAMPLE_PULL,
+      current: { ...SAMPLE_PULL.current, capped: true },
+      previous: { ...SAMPLE_PULL.previous, capped: true },
+    };
+    expect(renderRowCapCaveat(both)).toContain(
+      "current window at 5 rows, previous window at 4 rows",
+    );
   });
 
   it("returns null when neither window hit the cap", () => {
