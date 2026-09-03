@@ -1,6 +1,6 @@
 import type { CannibalGroup } from "./cannibalization.ts";
 import type { PageDecay } from "./content-decay.ts";
-import { MAX_ROW_LIMIT } from "./pull.ts";
+import { isSiteRoot } from "./document.ts";
 import type { PullData } from "./types.ts";
 
 /**
@@ -24,18 +24,32 @@ function grouped(value: number): string {
 }
 
 /**
- * One-line summary of a completed pull (row counts + the two window ranges).
+ * WHERE EACH WINDOW WAS CUT, or null when neither was — the shared subject of both truncation
+ * sentences below.
  *
- * The cap sentence DERIVES its number from MAX_ROW_LIMIT rather than spelling one out. The
- * literal it replaces (`5,000`) is what the ceiling used to be, and prose is exactly where a
- * changed constant goes unnoticed — nothing compiles against a sentence. A wrong number here is
- * worse than none: it tells the user how much data they are missing, and they have no way to
- * check it.
+ * IT NAMES THE ROWS ACTUALLY FETCHED rather than deriving a figure from a constant, and that is
+ * what B-2's pagination forced. There is no single ceiling left to name: a window stops at
+ * Google's last row, at the page ceiling, or at the storage budget — and the budget is measured
+ * on the rows themselves, so two properties truncate at different row counts and any constant in
+ * this prose would be wrong for at least one of them. The count printed is the count the reader's
+ * analysis actually holds, which is the one number they can check.
  */
+function describeTruncation(pull: PullData): string | null {
+  const cut = [
+    pull.current.capped ? `current window at ${grouped(pull.current.rows.length)} rows` : null,
+    pull.previous.capped ? `previous window at ${grouped(pull.previous.rows.length)} rows` : null,
+  ].filter((part): part is string => part !== null);
+  return cut.length === 0 ? null : cut.join(", ");
+}
+
+/** One-line summary of a completed pull (row counts + the two window ranges). */
 export function formatPullSummary(pull: PullData): string {
-  const capWarning = pull.current.capped || pull.previous.capped
-    ? `Note: this window hit the ${grouped(MAX_ROW_LIMIT)}-row cap — results cover the top rows only; comparisons may be partial.\n`
-    : "";
+  const cut = describeTruncation(pull);
+  const capWarning =
+    cut === null
+      ? ""
+      : `Note: truncated at the ${cut} — Search Console had more (query, page) rows than one ` +
+        "pull can store, so this covers the top rows only and comparisons may be partial.\n";
   return (
     `Pulled ${pull.days} days of Search Console data.\n` +
     `Current window ${pull.current.start_date}..${pull.current.end_date}: ` +
@@ -75,19 +89,20 @@ export function renderAnalyzedWindow(pull: PullData): string {
  * reads a page that fell out of the current window's top rows as current=0 and reports a
  * GHOST collapse, and every cannibalization share is computed against a truncated denominator.
  *
- * The number DERIVES from MAX_ROW_LIMIT, like formatPullSummary's: prose is exactly where a
- * changed constant goes unnoticed, and a wrong figure here tells the user how much data they
- * are missing with no way to check it.
+ * The figure is the window's OWN row count (describeTruncation), not a constant: since B-2 a
+ * window stops where Google, the page ceiling or the measured storage budget stops it, so there
+ * is no single ceiling that is true for every property.
  *
- * An OR over the two windows, deliberately: the previous window is the baseline every decay
- * number is measured against, so truncating IT inflates every "lost clicks" figure the tool
- * prints.
+ * BOTH windows are named when both were cut, deliberately: the previous window is the baseline
+ * every decay number is measured against, so truncating IT inflates every "lost clicks" figure
+ * the tool prints.
  */
 export function renderRowCapCaveat(pull: PullData): string | null {
-  if (!pull.current.capped && !pull.previous.capped) return null;
+  const cut = describeTruncation(pull);
+  if (cut === null) return null;
   return (
-    `Note: this analysis covers at most ${grouped(MAX_ROW_LIMIT)} rows per window — ` +
-    "the pull hit that cap, so these results may be partial."
+    `Note: the pull was truncated at the ${cut}, so this analysis covers the top rows only ` +
+    "and these results may be partial."
   );
 }
 
@@ -125,7 +140,25 @@ export const CANNIBAL_CLEAR_LEADER_GAP = 5;
  *
  * Every number in the sentence is read off the group's own rows — the URLs, both positions, the
  * measured gap, the impressions each side holds. Nothing is projected.
+ *
+ * THE THIRD FLOOR IS A URL CLASS, NOT A NUMBER (B-1, measured live 2026-09-03). On a real group
+ * this line named `https://dentnotion.com/` — the customer's home page — as a page to canonicalize
+ * into a doctor's biography page, and BOTH floors above held while it did: the smallest gap was
+ * 6.8 and the leader out-earned every trailing page. No threshold could have caught it, because
+ * the home page's numbers were not the problem. So it leaves the FOLDED side and is named out
+ * loud instead; being the KEEPER is still allowed, since keeping a home page harms nothing.
  */
+function homePageClause(homes: readonly { readonly page: string }[]): string {
+  if (homes.length === 0) return "";
+  const one = homes.length === 1;
+  return (
+    ` Your home page${one ? "" : "s"} ${homes.map((p) => p.page).join(", ")} ` +
+    `also rank${one ? "s" : ""} for this query and ${one ? "is" : "are"} left out of that ` +
+    "decision: a home page ranks for many queries at once, so folding it into one of them " +
+    "trades away every other query it holds."
+  );
+}
+
 export function cannibalizationAdvice(group: CannibalGroup): string | null {
   const ranked = [...group.pages].sort((a, b) => a.position - b.position);
   const [leader, ...trailing] = ranked;
@@ -135,18 +168,27 @@ export function cannibalizationAdvice(group: CannibalGroup): string | null {
   if (gaps.some((gap) => gap < CANNIBAL_CLEAR_LEADER_GAP)) return null;
   if (trailing.some((p) => p.clicks > leader.clicks)) return null;
 
-  const minGap = Math.min(...gaps);
-  const held = trailing.reduce((sum, p) => sum + p.impressions, 0);
-  const named = trailing.map((p) => `${p.page} (position ${pos(p.position)})`).join(", ");
-  // "84.7 positions behind" for one trailing page and "84.7+" for several: with one the gap IS
+  // The two floors above are judged over EVERY trailing page, home page included: a home page
+  // inside the gap still means this group is not a clean keep-one shape. Only the FOLD LIST is
+  // narrowed — and when nothing survives the narrowing there is no consolidation left to
+  // recommend, which is this function's own rule (null is a real answer) rather than a gap.
+  const homes = trailing.filter((p) => isSiteRoot(p.page));
+  const foldable = trailing.filter((p) => !isSiteRoot(p.page));
+  if (foldable.length === 0) return null;
+
+  const minGap = Math.min(...foldable.map((p) => p.position - leader.position));
+  const held = foldable.reduce((sum, p) => sum + p.impressions, 0);
+  const named = foldable.map((p) => `${p.page} (position ${pos(p.position)})`).join(", ");
+  // "84.7 positions behind" for one folded page and "84.7+" for several: with one the gap IS
   // that number, and a "+" on an exact figure quietly tells the reader the tool is rounding when
   // it is not. With several it is the SMALLEST of their gaps, and the "+" is the honest part.
-  const sit = trailing.length === 1 ? "it sits" : "they sit";
-  const gapText = trailing.length === 1 ? pos(minGap) : `${pos(minGap)}+`;
+  const sit = foldable.length === 1 ? "it sits" : "they sit";
+  const gapText = foldable.length === 1 ? pos(minGap) : `${pos(minGap)}+`;
   return (
     `    → Keep ${leader.page} (position ${pos(leader.position)}, ${grouped(leader.clicks)} clicks); ` +
     `canonicalize or merge ${named} into it — ${sit} ${gapText} positions behind while holding ` +
-    `${grouped(held)} of this query's ${grouped(group.total_impressions)} impressions.`
+    `${grouped(held)} of this query's ${grouped(group.total_impressions)} impressions.` +
+    homePageClause(homes)
   );
 }
 
@@ -241,7 +283,43 @@ export function contentDecayAdvice(decay: PageDecay): string {
   );
 }
 
-/** Render the decaying pages, each with what to do about it (or a friendly empty message). */
+/**
+ * What `position` MEANS, in one sentence, for every surface that prints one (R-7.11).
+ *
+ * ONE CONSTANT because two tools print this number — find_quick_wins applies a BAND to it
+ * (positions 8–20) and analyze_content_decay prints its MOVE between two windows — and two
+ * hand-written explanations of one figure is how they end up explaining it differently. Google's
+ * definition is a mean over the whole window: a page that sat 5th for half of it and 16th for the
+ * other half reports the same "10.5" as one that never moved, and a band or a drop read as a rank
+ * treats those as the same page.
+ *
+ * IT DESCRIBES A ROW, NOT A GRAPH. R-7.11 gives two definitions — the Performance GRAPH shows the
+ * average position of your TOP RESULT, while a TABLE row shows the average for that row's own
+ * dimensions — and this sentence sits under table rows. Saying "your top result" here would import
+ * the graph's definition into a (query, page) line and quietly describe a different number.
+ */
+export const AVERAGE_POSITION_NOTE =
+  "Position is Google's AVERAGE over the analyzed window — that page's mean rank for the " +
+  "queries it is listed against here, not where it sat on any single day.";
+
+/** The impressions-and-position half of a decay line: WHY the clicks fell, not just that they did. */
+function decayContext(decay: PageDecay): string {
+  const to = decay.current_position === null ? "not ranking" : pos(decay.current_position);
+  const from = decay.previous_position === null ? "not ranking" : pos(decay.previous_position);
+  return (
+    `${grouped(decay.previous_impressions)} → ${grouped(decay.current_impressions)} impressions, ` +
+    `position ${from} → ${to}`
+  );
+}
+
+/**
+ * Render the decaying pages, each with what to do about it (or a friendly empty message).
+ *
+ * The impression and position move rides on the SAME line as the click drop (B-2): a reader who
+ * has to hold two numbers to tell a lost ranking from a lost click-through should not have to
+ * find them in two places, and the live measurement that opened this finding had ten pages with
+ * no impression figure anywhere in the reply.
+ */
 export function formatContentDecay(decays: readonly PageDecay[]): string {
   if (decays.length === 0) {
     return "No content decay found: no page lost a meaningful share of its clicks vs the previous window.";
@@ -249,7 +327,11 @@ export function formatContentDecay(decays: readonly PageDecay[]): string {
   const lines = decays.map(
     (d) =>
       `• ${d.page} — ${d.previous_clicks} → ${d.current_clicks} clicks ` +
-      `(lost ${d.clicks_lost}, down ${pct(d.drop_ratio)})\n${contentDecayAdvice(d)}`,
+      `(lost ${d.clicks_lost}, down ${pct(d.drop_ratio)}); ${decayContext(d)}\n` +
+      contentDecayAdvice(d),
   );
-  return `${decays.length} decaying page${decays.length === 1 ? "" : "s"} (biggest loss first):\n${lines.join("\n")}`;
+  return (
+    `${decays.length} decaying page${decays.length === 1 ? "" : "s"} (biggest loss first):\n` +
+    `${lines.join("\n")}\n${AVERAGE_POSITION_NOTE}`
+  );
 }

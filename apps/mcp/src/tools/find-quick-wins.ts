@@ -1,4 +1,5 @@
 import {
+  AVERAGE_POSITION_NOTE,
   findQuickWinsResult,
   quickWinsReport,
   type PullData,
@@ -115,21 +116,55 @@ const PAGE_ONE_LAST_POSITION = 10;
  *
  * Null only for a group with no rows, which groupQuickWins cannot produce — it is here so the
  * impossible case cannot print half a sentence.
+ *
+ * A THIRD AXIS SINCE B-1a: the CLICK-THROUGH the sentence was printing beside itself and never
+ * reading. Measured live 2026-09-03 — the top recommendation was 24,864 impressions and 28 clicks
+ * at position 10.6 (CTR 0.1%), told to "push into the top 10" in the same words as a page in the
+ * same band earning five times that rate. R-7.12 is why they are different jobs: AI Overview
+ * impressions are INSIDE these counts while their clicks are not, so a query being SHOWN and not
+ * clicked may already have lost the click on the results page, and two ranks does not win it back.
+ *
+ * IT COMPARES TO THIS REPLY'S OWN SHORTLIST, never to a benchmark. There is no CTR-by-position
+ * table in the signed reference list, so this claims nothing about what a position "usually
+ * earns": both rates are printed and the reader sees the gap. The ORDER is untouched — which
+ * opportunity comes first is an unsigned decision (B-1b) and not this line's to make.
  */
-function quickWinAdvice(group: QuickWinPage): string | null {
+function quickWinAdvice(group: QuickWinPage, shortlistCtr: number): string | null {
   const anchor = group.shown[0];
   if (anchor === undefined) return null;
   const band = anchor.position > PAGE_ONE_LAST_POSITION ? "the top 10" : "the top 5";
   const push =
     `    → Push "${anchor.query}" (position ${pos(anchor.position)}, ` +
     `${grouped(anchor.impressions)} impressions) into ${band}`;
-  return group.queries === 1
-    ? `${push} — it is this page's only quick-win query, so tighten the page around that phrase.`
-    : `${push} — one on-page pass serves all ${grouped(group.queries)} of this page's quick-win ` +
+  const body =
+    group.queries === 1
+      ? " — it is this page's only quick-win query, so tighten the page around that phrase."
+      : ` — one on-page pass serves all ${grouped(group.queries)} of this page's quick-win ` +
         "queries, so widen it to cover them rather than chasing the one.";
+  const clickThrough =
+    anchor.ctr < shortlistCtr
+      ? ` It is being shown and not clicked — CTR ${pct(anchor.ctr)} against ${pct(shortlistCtr)} ` +
+        "across this shortlist — so look at the results page for that query first: an AI Overview, " +
+        "a featured snippet or ads can take the click before your rank is the problem."
+      : "";
+  return `${push}${body}${clickThrough}`;
 }
 
-function renderQuickWinPage(group: QuickWinPage): string {
+/**
+ * The shortlist's OWN click-through rate — the only comparison figure this tool is entitled to.
+ *
+ * Total clicks over total impressions rather than a mean of the rows' rates: a mean would weigh a
+ * 30-impression row and a 24,000-impression one equally, and the number is supposed to say what
+ * this set of opportunities actually earns. Zero impressions yields 0, which makes every row's
+ * `ctr < shortlistCtr` false — no data, no claim.
+ */
+function shortlistClickThrough(wins: readonly QuickWin[]): number {
+  const impressions = wins.reduce((sum, win) => sum + win.impressions, 0);
+  if (impressions <= 0) return 0;
+  return wins.reduce((sum, win) => sum + win.clicks, 0) / impressions;
+}
+
+function renderQuickWinPage(group: QuickWinPage, shortlistCtr: number): string {
   const head =
     `• ${group.page} — ${grouped(group.queries)} quick-win ` +
     `quer${group.queries === 1 ? "y" : "ies"}, ${grouped(group.impressions)} impressions, ` +
@@ -146,7 +181,7 @@ function renderQuickWinPage(group: QuickWinPage): string {
   // The recommendation goes LAST in the page's block, under the evidence it was derived from —
   // and omitted rather than blanked in the (unreachable) empty case, so a block never ends on a
   // stray arrow.
-  const advice = quickWinAdvice(group);
+  const advice = quickWinAdvice(group, shortlistCtr);
   return [head, ...rows, ...more, ...(advice === null ? [] : [advice])].join("\n");
 }
 
@@ -174,10 +209,15 @@ export function formatGroupedQuickWins(wins: readonly QuickWin[], total = wins.l
       : `\n…and ${grouped(hiddenPages)} more page${hiddenPages === 1 ? "" : "s"} with quick wins.`;
   const remainder =
     total > wins.length ? `\n…and ${grouped(total - wins.length)} more cleared the bands.` : "";
+  const shortlistCtr = shortlistClickThrough(wins);
   return (
     `${grouped(groups.length)} page${groups.length === 1 ? "" : "s"} with quick-win queries ` +
     "(position 8–20 with demand), best first:\n" +
-    `${shownPages.map(renderQuickWinPage).join("\n")}${morePages}${remainder}`
+    `${shownPages.map((group) => renderQuickWinPage(group, shortlistCtr)).join("\n")}` +
+    // R-7.11, and the SAME sentence analyze_content_decay prints: the band above is applied to a
+    // WINDOW AVERAGE, and nothing in this output said so. It goes last, under every figure it
+    // explains, and is absent from the empty branch where there is no position to explain.
+    `${morePages}${remainder}\n${AVERAGE_POSITION_NOTE}`
   );
 }
 

@@ -1,9 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { MAX_ROW_LIMIT, runPull, type GscApi } from "./pull.ts";
+import {
+  MAX_PULL_PAGES,
+  MAX_ROW_LIMIT,
+  PULL_PAGE_ROW_LIMIT,
+  PULL_WINDOW_BYTE_BUDGET,
+  runPull,
+  type GscApi,
+} from "./pull.ts";
 import {
   CURRENT_ROWS,
   FIXTURE_WINDOWS,
   PREVIOUS_ROWS,
+  gscRow,
   rawGoogleResponse,
   rawGoogleResponseWithOneBadRow,
 } from "./fixtures.ts";
@@ -73,7 +81,7 @@ describe("runPull", () => {
       startDate: FIXTURE_WINDOWS.current.start_date,
       endDate: FIXTURE_WINDOWS.current.end_date,
       dimensions: ["query", "page"],
-      rowLimit: MAX_ROW_LIMIT,
+      rowLimit: PULL_PAGE_ROW_LIMIT,
       startRow: 0,
     });
     // The second call targets the previous window.
@@ -119,12 +127,136 @@ async function flush(): Promise<void> {
  * suite green. See pull.ts for the measured bytes-per-row this value is derived from.
  */
 describe("MAX_ROW_LIMIT — the ceiling VALUE, not just 'some ceiling'", () => {
-  it("is 15,000 rows per window", () => {
-    expect(MAX_ROW_LIMIT).toBe(15000);
+  it("is 100,000 rows per window — four pages of Google's own maximum", () => {
+    expect(MAX_ROW_LIMIT).toBe(100000);
+    expect(MAX_ROW_LIMIT).toBe(PULL_PAGE_ROW_LIMIT * MAX_PULL_PAGES);
   });
 
-  it("stays below Google's 25,000-per-request maximum (one request, no pagination)", () => {
-    expect(MAX_ROW_LIMIT).toBeLessThanOrEqual(25000);
+  it("asks for at most Google's documented 25,000 rows per REQUEST (R-7.2)", () => {
+    expect(PULL_PAGE_ROW_LIMIT).toBe(25000);
+  });
+
+  /**
+   * The page ceiling is not the ceiling that usually binds, and pinning the byte budget as a
+   * LITERAL is the point: every other assertion here builds its expectation FROM a constant and
+   * would slide with it, letting the persisted worst case grow by orders of magnitude with the
+   * suite green. 12 MB is the band `crawl.ts` proved safe for a stored result, halved because a
+   * pull persists TWO windows in one jobs.result blob.
+   */
+  it("keeps a per-window storage budget of half the 12 MB proven band", () => {
+    expect(PULL_WINDOW_BYTE_BUDGET).toBe(6_000_000);
+  });
+});
+
+/**
+ * B-2 — PAGINATION. Measured live 2026-09-03 on the portfolio's largest property: BOTH windows of
+ * the default 90-day pull returned 15000/15000, and the three 10-credit analyses sold on top of
+ * that pull all ran over truncated rows — `find_quick_wins` said "638 more cleared the bands",
+ * `analyze_content_decay` printed a `17 → 0 clicks` collapse that a dropped row manufactures, and
+ * every cannibalization share was divided by a short denominator. `startRow` was always 0 (R-7.2
+ * documents it and it was never used).
+ *
+ * WHAT STOPS THE LOOP IS THE PAIR, and both halves are pinned below. The page ceiling is the work
+ * order's; the BYTE budget is the file's own measured storage argument, and it is the one that
+ * binds on the sites that actually fill a cap — large faceted properties whose URLs and queries
+ * are long, so row count and row SIZE rise together.
+ */
+describe("runPull pages through startRow until Google, the pages or the bytes run out (B-2)", () => {
+  /**
+   * A port that answers page N of EITHER window with `pageSizes[N]` synthetic rows (the last
+   * entry repeats), recording every request body.
+   *
+   * The page index is derived from the request's own `startRow`, never from a call counter: the
+   * two windows are fetched CONCURRENTLY, so a counter shared between them would make which
+   * window got which page a race — and the spec would be pinning the scheduler.
+   */
+  function pagedApi(pageSizes: readonly number[], rowBytes = 40) {
+    const bodies: Record<string, unknown>[] = [];
+    const api: GscApi = {
+      refreshAccessToken: async () => ({ accessToken: "ya29.x" }),
+      searchAnalyticsQuery: async (_token, _property, body) => {
+        bodies.push(body);
+        const limit = Number(body.rowLimit);
+        const page = Number(body.startRow) / limit;
+        const size = pageSizes[Math.min(page, pageSizes.length - 1)] ?? 0;
+        const tag = `${String(body.startDate)}-${page}`;
+        return rawGoogleResponse(
+          Array.from({ length: size }, (_unused, i) =>
+            gscRow({
+              query: `q-${tag}-${i}`.padEnd(rowBytes, "x"),
+              page: `https://shop.test/p-${tag}-${i}`,
+              impressions: 10,
+              position: 9,
+            }),
+          ),
+        );
+      },
+    };
+    return { api, bodies };
+  }
+
+  it("stops after ONE request when Google's first page is not full", async () => {
+    const { api, bodies } = pagedApi([3]);
+    const pull = await pullWith(api, 10);
+    expect(bodies).toHaveLength(2); // one per window, no second page
+    expect(pull.current.rows).toHaveLength(3);
+    expect(pull.current.capped).toBe(false);
+  });
+
+  it("asks for the NEXT page with startRow advanced, and merges both pages in order", async () => {
+    const { api, bodies } = pagedApi([4, 2]);
+    const pull = await pullWith(api, 4);
+
+    const current = bodies.filter((b) => b.startDate === FIXTURE_WINDOWS.current.start_date);
+    expect(current.map((b) => b.startRow)).toEqual([0, 4]);
+    expect(current.every((b) => b.rowLimit === 4)).toBe(true);
+    // 4 + 2 rows, first page first — a merge that re-sorted would break every caller's ordering.
+    expect(pull.current.rows).toHaveLength(6);
+    expect(pull.current.rows[0]?.query).toMatch(/^q-2026-04-19-0-0/);
+    expect(pull.current.rows[4]?.query).toMatch(/^q-2026-04-19-1-0/);
+    // Google had no more to give, so nothing was truncated.
+    expect(pull.current.capped).toBe(false);
+  });
+
+  it("stops at the PAGE ceiling and says the window is capped", async () => {
+    // Every page comes back full, so only MAX_PULL_PAGES can stop this.
+    const { api, bodies } = pagedApi([2]);
+    const pull = await pullWith(api, 2);
+    expect(bodies.filter((b) => b.startDate === FIXTURE_WINDOWS.current.start_date)).toHaveLength(
+      MAX_PULL_PAGES,
+    );
+    expect(pull.current.rows).toHaveLength(2 * MAX_PULL_PAGES);
+    expect(pull.current.capped).toBe(true);
+  });
+
+  /**
+   * THE BUDGET IS A HARD BOUND, AND THE CUT IS INSIDE THE PAGE.
+   *
+   * The first version of this spec asserted `toHaveLength(2000)` — it PINNED the overshoot
+   * (signed lesson 12: a test double more forgiving than the runtime turns a missing constraint
+   * into a passing test). The budget was checked only after a whole page had been appended, so a
+   * 25,000-row page landed intact and a stored pull's real worst case was 50,000 rows / 21.30 MB
+   * against a 12 MB band — a page of pessimistic rows overshot on its own, inside page one.
+   *
+   * So what is asserted now is the BOUND, computed the way the stored blob is: the kept rows must
+   * fit the budget, and the page that would have overshot must come back SHORT.
+   */
+  it("cuts the page that would outgrow the storage budget, and never stores past it", async () => {
+    // Rows padded to ~4 KB each: one page of 2,000 is ~8 MB, well over the 6 MB budget.
+    const { api, bodies } = pagedApi([2000], 4000);
+    const pull = await pullWith(api, 2000);
+    expect(bodies.filter((b) => b.startDate === FIXTURE_WINDOWS.current.start_date)).toHaveLength(1);
+
+    const stored = Buffer.byteLength(JSON.stringify(pull.current.rows), "utf8");
+    expect(stored).toBeLessThanOrEqual(PULL_WINDOW_BYTE_BUDGET);
+    // …and it really did have to cut: the page offered 2,000 rows and fewer were kept.
+    expect(pull.current.rows.length).toBeGreaterThan(0);
+    expect(pull.current.rows.length).toBeLessThan(2000);
+    expect(pull.current.capped).toBe(true);
+    // BOTH windows are bounded, which is what makes 12 MB the arithmetic maximum for a pull.
+    expect(
+      Buffer.byteLength(JSON.stringify(pull.previous.rows), "utf8"),
+    ).toBeLessThanOrEqual(PULL_WINDOW_BYTE_BUDGET);
   });
 });
 
@@ -144,10 +276,11 @@ describe("runPull — the row cap is read from the RAW response, before parsing"
 
     const pull = await pullWith(api, 3);
 
-    // Google sent 3 rows (a full page at this cap); one was unparseable, so 2 survive.
-    expect(pull.current.rows).toHaveLength(2);
-    expect(pull.previous.rows).toHaveLength(2);
-    // The page was FULL all the same — both windows must say so.
+    // Google sends 3 rows (a full page at this cap) to EVERY request, so the loop runs to the
+    // page ceiling; one row per page is unparseable, so 2 survive from each.
+    expect(pull.current.rows).toHaveLength(2 * MAX_PULL_PAGES);
+    expect(pull.previous.rows).toHaveLength(2 * MAX_PULL_PAGES);
+    // Every page was FULL all the same — both windows must say so.
     expect(pull.current.capped).toBe(true);
     expect(pull.previous.capped).toBe(true);
   });
@@ -175,9 +308,10 @@ describe("runPull — the row cap is read from the RAW response, before parsing"
       searchAnalyticsQuery: async () => rawGoogleResponse(CURRENT_ROWS), // 5 well-formed rows
     };
 
-    const pull = await pullWith(api, 3); // 5 raw rows against a cap of 3
+    const pull = await pullWith(api, 3); // 5 raw rows against a per-request cap of 3
 
-    expect(pull.current.rows).toHaveLength(CURRENT_ROWS.length); // nothing was dropped
+    // Nothing was dropped, on every one of the pages the ceiling allowed.
+    expect(pull.current.rows).toHaveLength(CURRENT_ROWS.length * MAX_PULL_PAGES);
     expect(pull.current.capped).toBe(true);
     expect(pull.previous.capped).toBe(true);
   });

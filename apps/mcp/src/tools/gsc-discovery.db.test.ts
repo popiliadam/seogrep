@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { encryptToken, toByteaHex } from "@pseo/core";
-import { NO_PULL_MESSAGE } from "../gsc-data/load.ts";
+import { NOT_CONNECTED_MESSAGE, NO_PULL_MESSAGE } from "../gsc-data/load.ts";
 import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
 import { getServiceClient } from "../db.ts";
@@ -36,8 +36,12 @@ const FIXTURE_RUN_FINISHED_AT = new Date();
  * Supabase stack. A single seeded pull (SAMPLE_PULL) feeds all three; the reader + ledger are
  * REAL. Two guarantees per tool:
  *   - over a stored pull it reserves+commits ONE chain (net -10) and returns the right finding;
- *   - with NO pull it THROWS "pull_gsc_data first" and RELEASES (net 0) — never charged for
- *     being told to pull first (the same reserve-trace discipline the audits use).
+ *   - with NO pull it THROWS and RELEASES (net 0) — never charged for being told what to do
+ *     next (the same reserve-trace discipline the audits use). WHICH sentence it throws is the
+ *     project's state and is pinned both ways since B-4: a project with no Search Console
+ *     CONNECTION is sent to connect_gsc, because "run pull_gsc_data first" is an instruction
+ *     that cannot succeed there; a CONNECTED project that has never been pulled is sent to
+ *     pull_gsc_data.
  */
 
 function requireEnv(name: string): string {
@@ -205,10 +209,31 @@ describe("discovery tools sync charge against the local stack", () => {
     expect(balanceOf(rows)).toBe(100 - TOOL_COSTS[name]);
   });
 
-  it.each(CASES)("$name with no pull throws pull_gsc_data first and RELEASES (net 0)", async ({ make }) => {
+  it.each(CASES)("$name with no CONNECTION throws connect_gsc first and RELEASES (net 0)", async ({ make }) => {
     const ctx = await makeCtx();
     await seedGrant(ctx.userId, 100);
     const projectId = await makeProject(ctx.userId, `nopull-${randomUUID()}.example.com`);
+
+    // No seedConnection: this project has never been connected to Search Console, so telling the
+    // caller to run pull_gsc_data would send them to a tool that refuses them in turn (B-4, the
+    // two-step dead end measured live 2026-09-03).
+    await expect(make().run(ctx, { project_id: projectId })).rejects.toThrow(/Run connect_gsc first/);
+
+    const rows = await ledgerRows(ctx.userId);
+    expect(rows.map((r) => r.kind)).toEqual(["grant", "spend_reserve", "spend_release"]);
+    expect(balanceOf(rows)).toBe(100);
+  });
+
+  /**
+   * THE OTHER HALF OF B-4, and it is what stops the fix from becoming "always say connect_gsc":
+   * the SAME missing pull on a CONNECTED project still names pull_gsc_data. Only the connection
+   * row differs between this spec and the one above.
+   */
+  it.each(CASES)("$name CONNECTED but never pulled still throws pull_gsc_data first (net 0)", async ({ make }) => {
+    const ctx = await makeCtx();
+    await seedGrant(ctx.userId, 100);
+    const projectId = await makeProject(ctx.userId, `connected-nopull-${randomUUID()}.example.com`);
+    await seedConnection(ctx.userId, projectId, "active");
 
     await expect(make().run(ctx, { project_id: projectId })).rejects.toThrow(/Run pull_gsc_data first/);
 
@@ -269,7 +294,10 @@ describe("discovery tools state the window and the row cap of the pull they anal
 
     const text = (await make().run(ctx, { project_id: projectId })).content[0]?.text ?? "";
 
-    expect(text).toContain("at most 15,000 rows per window");
+    // SAMPLE_PULL's previous window holds 4 rows, and the sentence names the count the analysis
+    // actually holds rather than a ceiling constant — since pagination there is no single ceiling
+    // that is true for every property (pull.ts PULL_WINDOW_BYTE_BUDGET).
+    expect(text).toContain("truncated at the previous window at 4 rows");
     expect(text).toMatch(/may be partial/i);
     expect(text).toMatch(needle);
   });
@@ -308,7 +336,7 @@ async function callThroughRegistry(
 
 describe("discovery tools with no pull — what the CLIENT receives", () => {
   it.each(CASES)(
-    "$name returns NO_PULL_MESSAGE verbatim, no crash sentence, and nets to zero",
+    "$name returns the precondition message verbatim, no crash sentence, and nets to zero",
     async ({ name, make }) => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       try {
@@ -320,7 +348,8 @@ describe("discovery tools with no pull — what the CLIENT receives", () => {
 
         expect(result.isError).toBe(true);
         // BYTE-EXACT, with the fee sentence imported rather than copied (2026-08-25, card 12).
-        expect(result.content[0]?.text).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
+        // The project has no connection, so B-4's routing sends it to connect_gsc.
+        expect(result.content[0]?.text).toBe(`${NOT_CONNECTED_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
         expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
         expect(result.content[0]?.text).not.toMatch(/reference/i);
         expect(errorSpy).not.toHaveBeenCalled();
@@ -365,12 +394,20 @@ describe("discovery tools with no pull — what the CLIENT receives", () => {
       texts.push(result.content[0]?.text ?? "");
     }
 
-    expect(texts[0]).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
+    expect(texts[0]).toBe(`${NOT_CONNECTED_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
     expect(texts[1]).toBe(texts[0]);
     expect(texts[2]).toBe(texts[0]);
     // …and the other tenant's pull was genuinely there to be leaked.
     const owner = await makeFindQuickWinsTool().run(other, { project_id: otherProjectId });
     expect(owner.isError).toBeUndefined();
+
+    // B-4 SPLITS THE SENTENCE, AND THIS IS WHERE IT IS ALLOWED TO: only a project that is BOTH
+    // this tenant's AND connected reads differently. The three above are indistinguishable
+    // precisely because none of them resolves to a connection this caller owns.
+    const connectedId = await makeProject(ctx.userId, `connected-${randomUUID()}.example.com`);
+    await seedConnection(ctx.userId, connectedId, "active");
+    const connected = await callThroughRegistry(ctx, makeFindQuickWinsTool(), connectedId);
+    expect(connected.content[0]?.text).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
   });
 });
 
@@ -568,7 +605,7 @@ describe("discovery tools over an ARCHIVED project — what the CLIENT receives"
     const stranger = await callThroughRegistry(ctx, makeFindQuickWinsTool(), otherProjectId);
     const nowhere = await callThroughRegistry(ctx, makeFindQuickWinsTool(), randomUUID());
 
-    expect(stranger.content[0]?.text).toBe(`${NO_PULL_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
+    expect(stranger.content[0]?.text).toBe(`${NOT_CONNECTED_MESSAGE} ${NOT_CHARGED_SENTENCE}`);
     expect(nowhere.content[0]?.text).toBe(stranger.content[0]?.text);
     expect(stranger.content[0]?.text).not.toMatch(/archiv/i);
   });

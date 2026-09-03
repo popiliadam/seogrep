@@ -550,6 +550,26 @@ export function declaredProjectId(input: unknown): string | undefined {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
+/**
+ * Terminate a ONE-LINE zod refusal so the fee sentence that follows it reads as a sentence.
+ *
+ * `withNoChargeNote` joins a single-line refusal to "You were not charged." with a SPACE, which is
+ * right for prose and wrong for zod: `z.prettifyError` ends a one-issue message with the offending
+ * value and no terminator, so the join produced `✖ Unrecognized key: "limit" You were not charged.`
+ * — measured live on all four GSC tools and on audit_speed before them.
+ *
+ * MULTI-LINE messages are returned UNTOUCHED. Those end on an indented field path (`→ at
+ * project_id`) and withNoChargeNote already separates them with a blank line; a period there would
+ * attach itself to the path and read as part of the field name.
+ *
+ * The fix lives here rather than in free-refusal.ts (slice 2 ruling): that module's separator rule
+ * is correct for every caller, and this is the only caller that hands it an unterminated sentence.
+ */
+function terminateOneLine(message: string): string {
+  if (message.includes("\n")) return message;
+  return /[.!?:;]$/.test(message) ? message : `${message}.`;
+}
+
 export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
   if (isPerUnitTool(spec.name) && spec.units === undefined) {
     throw new Error(
@@ -587,7 +607,9 @@ export function defineTool<TIn>(spec: ToolSpec<TIn>): RegisteredTool {
         // loud only for a PRICED tool: on a 0-credit tool "you were not charged" is noise about
         // a charge that could never have happened, and the table is read directly rather than
         // through creditCostFor, which throws for a per-unit tool when it is handed no count.
-        const refusal = `Invalid input for "${spec.name}": ${z.prettifyError(parsed.error)}`;
+        const refusal = terminateOneLine(
+          `Invalid input for "${spec.name}": ${z.prettifyError(parsed.error)}`,
+        );
         return errorResult(TOOL_COSTS[spec.name] > 0 ? withNoChargeNote(refusal) : refusal);
       }
       // D17 confirmation threshold — the ONE cross-cutting credit concern, applied to every charge

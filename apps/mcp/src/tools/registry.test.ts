@@ -798,6 +798,50 @@ describe("S1 — unknown input keys are refused, not silently dropped", () => {
   });
 
   /**
+   * A ONE-LINE zod refusal is prose, and withNoChargeNote joins prose with a SPACE — so a message
+   * that does not end in punctuation produced `✖ Unrecognized key: "limit" You were not charged.`
+   * live on four tools of slice 3 (2026-09-03) and on audit_speed before it. The fix is here and
+   * not in free-refusal.ts: the separator rule there is correct for every caller, and only THIS
+   * caller hands it a sentence with no terminator.
+   *
+   * BOTH DIRECTIONS, because a one-sided pin would pass a version that appends a period to
+   * everything: the MULTI-LINE shape ends on an indented field path, where a period would read as
+   * part of the path.
+   */
+  it("terminates a ONE-LINE zod refusal so the fee sentence reads as its own sentence", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "research_keywords", // priced (25), so the fee sentence is appended
+      description: "d",
+      inputSchema: z.object({ keywords: z.array(z.string()).optional() }),
+      handler,
+    });
+
+    const result = await tool.run(CTX, { keywords: ["a"], limit: 5 });
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toContain("\n");
+    expect(text).toContain(`"limit". ${NOT_CHARGED_SENTENCE}`);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("leaves a MULTI-LINE zod refusal exactly as zod wrote it (no period after a field path)", async () => {
+    const handler = vi.fn(async () => textResult("should not run"));
+    const tool = defineTool({
+      name: "research_keywords",
+      description: "d",
+      inputSchema: z.object({ project_id: z.uuid() }),
+      handler,
+    });
+
+    const result = await tool.run(CTX, { project_id: "not-a-uuid" });
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("→ at project_id\n\n");
+    expect(text).not.toContain("project_id.");
+    expect(text).toContain(NOT_CHARGED_SENTENCE);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  /**
    * `confirm` is the ONE reserved registry parameter (D17), deliberately absent from every tool's
    * zod schema. Strictness must not turn it into an unknown key: a caller told to "run it again
    * with confirm: true" would then be refused for doing exactly that, and the only tools the D17
