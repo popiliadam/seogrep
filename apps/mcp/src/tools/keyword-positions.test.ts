@@ -115,6 +115,27 @@ describe("refusals cost nothing and read nothing", () => {
     expect(loads).toHaveLength(0);
   });
 
+  /**
+   * F-3 — THE REFUSAL HAS TO NAME THE STEP THAT IS ACTUALLY MISSING. Until 2026-09-03 it named
+   * only `track_keywords`, and the live audit walked the loop that produces: keywords were
+   * registered, the read was run again, and it refused in exactly the same words. The step that
+   * fills this store is `serp_snapshot`, and it is PRICED — a refusal that sends a caller to a
+   * free tool which changes nothing is worse than one that names no tool at all.
+   */
+  it("names serp_snapshot as the missing step, and says it is the priced one", async () => {
+    const { tool } = makeTool({ stored: 0 });
+    const text = textOf(await tool.run(ctx, ask()));
+    expect(text).toMatch(/serp_snapshot is what takes the readings, priced per keyword/i);
+    // track_keywords keeps its place — as the SEPARATE, free step it is, not as the fix.
+    expect(text).toMatch(/track_keywords records which keywords to watch — a separate step, and free/i);
+    // The three tools, in the order a caller has to run them.
+    const order = ["track_keywords", "serp_snapshot", "keyword_positions"].map((tool) =>
+      text.indexOf(tool),
+    );
+    expect(order.every((at) => at >= 0), text).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
   it("says which filter the emptiness is about when one was applied", async () => {
     const { tool } = makeTool({ stored: 0 });
     const plain = textOf(await tool.run(ctx, ask()));
