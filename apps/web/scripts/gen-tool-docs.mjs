@@ -1085,7 +1085,16 @@ export const DOC_PROSE = {
       "you are still charged for the delivered analysis).\n\nEach page also carries **one recommended " +
       "next move**, derived from that page's own rows: which of its queries to push, from its current " +
       "position into the nearest band above it, and whether to widen the page to cover all the " +
-      "near-miss queries riding on it or tighten it around the single one.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
+      "near-miss queries riding on it or tighten it around the single one.\n\nWhen a page is being " +
+      "**shown and not clicked** — its click-through rate is below what the rest of this shortlist " +
+      "earns — the recommendation says so and points you at the results page before the page " +
+      "itself. An AI Overview, a featured snippet or ads can be taking the click while your rank is " +
+      "fine, and two more positions do not win that back. Both rates are printed; nothing here " +
+      "claims what a given position \"should\" earn, because Google publishes no such figure.\n\n" +
+      "The list ends with one line saying what `position` is: Google reports it as an **average " +
+      "over the whole window**, not a rank on any single day, so a query that sat 5th for half the " +
+      "window and 16th for the other half reports the same figure as one that never moved — and " +
+      "the 8–20 band is applied to that average.\n\nEvery reply ends with the same footer: the window that was analyzed against " +
       "the one before it, a caveat when either window hit the row cap, when the pull was taken " +
       "plus a sentence once that is old, and — when your Search Console credential has stopped " +
       "working — a warning to reconnect.",

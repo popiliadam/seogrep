@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
-import { findQuickWins } from "../gsc-data/index.ts";
+import { AVERAGE_POSITION_NOTE, findQuickWins } from "../gsc-data/index.ts";
 import type { GscRow, LoadTokenStatusFn, PullData } from "../gsc-data/index.ts";
 import { gscRow, pullData, SAMPLE_PULL } from "../gsc-data/fixtures.ts";
 import { formatGroupedQuickWins, renderQuickWins } from "./find-quick-wins.ts";
@@ -518,5 +518,76 @@ describe("each quick-win page carries what to do about it", () => {
     const text = await textFor(empty);
     expect(text).toContain("No quick wins found");
     expect(text).not.toContain("→ Push");
+  });
+
+  /**
+   * B-1a — THE SENTENCE PRINTS A CTR IT NEVER READ. Measured live 2026-09-03: the top
+   * recommendation was a page at position 10.6 with 24,864 impressions and 28 clicks (CTR 0.1%),
+   * and the tool said "push it into the top 10" in exactly the same words it used for a page in
+   * the same band earning five times the click-through. R-7.12 names why those are not the same
+   * job: AI Overview impressions are INSIDE these counts while their clicks are not, so a query
+   * that is being SHOWN and not clicked may have lost the click on the results page, and moving
+   * up two ranks is not what fixes that.
+   *
+   * THE COMPARISON IS TO THIS REPLY'S OWN DATA, not to a benchmark. No CTR-by-position table
+   * exists in the signed reference list (`find_quick_wins` audit §5), so nothing here claims what
+   * a position "usually earns"; the sentence names the shortlist's own click-through rate and the
+   * page's, and lets the reader see the gap.
+   *
+   * ORDERING IS UNTOUCHED — B-1b is an unsigned decision. The low-CTR page is still first here,
+   * which the last assertion pins so a later reordering cannot be smuggled in through this fix.
+   */
+  const SHOWN_NOT_CLICKED = "https://shop.test/shown-not-clicked";
+  const EARNING = "https://shop.test/earning";
+  const CTR_PULL: PullData = pullData(
+    [
+      gscRow({ query: "big shown", page: SHOWN_NOT_CLICKED, clicks: 28, impressions: 24864, ctr: 28 / 24864, position: 10.6 }),
+      gscRow({ query: "small earned", page: EARNING, clicks: 50, impressions: 1000, ctr: 0.05, position: 9 }),
+    ],
+    [],
+  );
+
+  it("tells a page that is being shown and not clicked to look at the results page first", async () => {
+    const text = await textFor(CTR_PULL);
+    const advice = text.split("\n").filter((line) => line.includes("→ Push "));
+    const shown = advice.find((line) => line.includes('"big shown"'));
+    expect(shown).toBeDefined();
+    expect(shown).toMatch(/CTR 0\.1%/);
+    // The comparison figure is the shortlist's own: (28 + 50) / (24,864 + 1,000) = 0.3%.
+    expect(shown).toMatch(/0\.3%/);
+    expect(shown).toMatch(/results page/i);
+  });
+
+  it("says nothing of the kind for a page already earning above the shortlist's rate", async () => {
+    const text = await textFor(CTR_PULL);
+    const earning = text
+      .split("\n")
+      .find((line) => line.includes("→ Push ") && line.includes('"small earned"'));
+    expect(earning).toBeDefined();
+    expect(earning).not.toMatch(/results page/i);
+    expect(earning).toMatch(/tighten the page around that phrase/);
+  });
+
+  it("leaves the ORDER exactly where it was — this fix changes the sentence, not the ranking", async () => {
+    const pages = (await textFor(CTR_PULL)).match(/^• (\S+)/gm);
+    expect(pages).toEqual([`• ${SHOWN_NOT_CLICKED}`, `• ${EARNING}`]);
+  });
+
+  /**
+   * R-7.11 (B-2) — every one of those "position 10.6" figures is an AVERAGE over the pull's whole
+   * window, and the band (8–20) is applied to it as though it were a rank. A page that sat 5th for
+   * half the window and 16th for the other half reports the same 10.5 as one that never moved, and
+   * "push it into the top 10" reads as though half the job were already done.
+   *
+   * The SAME constant analyze_content_decay prints, deliberately: two tools explaining one number
+   * in two hand-written sentences is how the two explanations end up disagreeing.
+   */
+  it("tells the reader that `position` is a window average", async () => {
+    expect(await textFor(SPLIT_PULL)).toContain(AVERAGE_POSITION_NOTE);
+  });
+
+  it("says nothing about position when there are no positions to explain", async () => {
+    const empty = pullData([gscRow({ query: "x", page: "https://shop.test/x", position: 2 })], []);
+    expect(await textFor(empty)).not.toContain(AVERAGE_POSITION_NOTE);
   });
 });
