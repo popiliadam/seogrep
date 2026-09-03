@@ -31,6 +31,7 @@ import {
   SEARCH_VOLUME_DESCRIPTION_CLAUSE,
   SEARCH_VOLUME_NOTE,
 } from "../format/search-volume.ts";
+import { MODEL_PRECISION_CLAUSE } from "../format/quantities.ts";
 import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
@@ -409,26 +410,48 @@ const FLAT_ZERO_COLUMNS: readonly FlatZeroColumn<RankedKeywordRow>[] = [
     misreadAs: "that nobody searches for any of these",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume,
+    // `renderRow` prints this through `thousands`, which is Math.round + digit grouping.
+    printedAs: Math.round,
   },
   {
     fieldLabel: "CPC",
     misreadAs: "that none of these keywords are worth anything to advertisers",
     nonEnglishEvidence: true,
     valueOf: (row) => row.cpc,
+    // `money` keeps CENTS — a quoted price's own unit (format/quantities.ts, class 3's contrast).
+    // So a cpc of 0.004 prints "$0.00" and IS a printed zero here.
+    printedAs: (value) => Number(value.toFixed(2)),
   },
   {
     fieldLabel: "difficulty",
     misreadAs: "that every one of these keywords is easy to rank for",
     nonEnglishEvidence: true,
     valueOf: (row) => row.keyword_difficulty,
+    // Printed verbatim as `difficulty N/100`; the vendor sends this one as an integer already.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "est. traffic",
     misreadAs: "that none of these rankings bring you any visitors",
     nonEnglishEvidence: false,
     valueOf: (row) => row.etv,
+    // `est. traffic N/mo`, also through `thousands`. THIS is the column finding B-2 was measured
+    // on: three live rows at 0 < etv < 0.5 all printed 0 and said nothing.
+    printedAs: Math.round,
   },
 ];
+
+/**
+ * WHAT `est. traffic` IS AND WHAT ITS DIGITS ARE WORTH (finding B-5).
+ *
+ * The sibling `my_pages` prints the same DataForSEO field, rounds it the same way, and has always
+ * told the reader so; this surface rounded silently. Composed around the SHARED clause in
+ * format/quantities.ts rather than restating it, so the two admissions cannot drift into saying
+ * different things about one number.
+ */
+export const ETV_PRECISION_NOTE =
+  "`est. traffic` is DataForSEO's own `etv` — its ESTIMATE of the monthly visits that ranking " +
+  `earns, not a measurement of your traffic. It is shown to the nearest whole visit: ${MODEL_PRECISION_CLAUSE}.`;
 
 /** Render the ranked keywords as the plain-text tool output (pure — unit-tested directly). */
 export function formatRankedKeywords(
@@ -480,7 +503,15 @@ export function formatRankedKeywords(
   // disclosure half: these rows are ordered by the caller's own `sort` (or the vendor's default),
   // NOT by search_volume, so the band sentence would describe an ordering this tool never makes.
   const withVolumeNote = `${withHint}\n\n${SEARCH_VOLUME_NOTE}`;
-  return flat.length === 0 ? withVolumeNote : `${withVolumeNote}\n\n${flat.join("\n\n")}`;
+  // B-5. The `est. traffic` column is `etv` rounded to a whole visit, and until now this surface
+  // rounded it and said nothing while the sibling `my_pages` said so plainly about the same vendor
+  // field. Printed only when at least one row actually carried an estimate: an admission about a
+  // column nobody was shown is noise. The load-bearing clause is the SHARED one.
+  const withEtvNote =
+    result.rows.some((row) => row.etv !== null)
+      ? `${withVolumeNote}\n\n${ETV_PRECISION_NOTE}`
+      : withVolumeNote;
+  return flat.length === 0 ? withEtvNote : `${withEtvNote}\n\n${flat.join("\n\n")}`;
 }
 
 /**

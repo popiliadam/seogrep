@@ -82,6 +82,20 @@ export function exactCount(value: number): string {
 }
 
 /**
+ * WHY THE TRAILING DIGITS ARE GONE, in the product's own words — ONE clause, for every surface
+ * that prints a class-2 or class-3 estimate.
+ *
+ * Rounding is a claim (see the header), so a surface that rounds owes the reader the reason. It
+ * was being made in exactly one place: `my_pages` said it, and `ranked_keywords` rounded the SAME
+ * vendor field the same way and said nothing (finding B-5, 2026-09-03). Two admissions written
+ * twice is how they drift into saying different things about one number, so the load-bearing half
+ * lives here and both surfaces compose their sentence around it.
+ */
+export const MODEL_PRECISION_CLAUSE =
+  "they come out of a model, and the further decimal places that model emits are not precision " +
+  "it has";
+
+/**
  * CLASS 2 — a MODELLED monthly visit estimate, to the nearest whole visit, carrying its unit.
  * Returns e.g. "117/mo" so the number can never be read as a per-day or lifetime figure.
  */

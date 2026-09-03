@@ -21,6 +21,7 @@ import {
   formatRankedKeywords,
   makeRankedKeywordsTool,
 } from "./ranked-keywords.ts";
+import { MODEL_PRECISION_CLAUSE } from "../format/quantities.ts";
 import {
   SEARCH_VOLUME_BAND_NOTE,
   SEARCH_VOLUME_DESCRIPTION_CLAUSE,
@@ -1533,5 +1534,51 @@ describe("ranked_keywords — the shared search-volume note (R-8.9)", () => {
       RENDER_INPUT,
     );
     expect(text).not.toContain(SEARCH_VOLUME_BAND_NOTE);
+  });
+});
+
+/**
+ * B-2 / B-5 — the estimate columns say what they are, and the flat-zero note reads what is PRINTED.
+ *
+ * Measured live 2026-09-03: three rows came back with `etv` under 0.5, all three printed
+ * `est. traffic 0/mo`, and no flat-zero note appeared beside them.
+ */
+describe("ranked_keywords — the estimate columns (B-2, B-5)", () => {
+  const withEtv = (...etvs: number[]) =>
+    formatRankedKeywords(
+      result({ rows: etvs.map((etv, i) => row({ keyword: `kw ${i}`, position: 5, etv })) }),
+      RENDER_INPUT,
+    );
+
+  it("fires the flat-zero note when every row PRINTS est. traffic 0, not only when etv is 0", () => {
+    const text = withEtv(0.3, 0.49);
+    expect(text).toContain("est. traffic 0/mo");
+    expect(text).toContain("DataForSEO reported est. traffic 0");
+  });
+
+  it("stays silent once one row prints a non-zero estimate", () => {
+    const text = withEtv(0.3, 1.2);
+    expect(text).toContain("est. traffic 1/mo");
+    expect(text).not.toContain("DataForSEO reported est. traffic 0");
+  });
+
+  /**
+   * B-5. The sibling `my_pages` already tells the reader its `etv` is shown to the nearest whole
+   * visit; ranked_keywords rounded the same vendor field the same way and said nothing. Both now
+   * make the claim out of ONE shared clause, so they cannot drift into two different admissions.
+   */
+  it("says the estimate is rounded to a whole visit, in the shared words", () => {
+    const text = withEtv(120.6, 3.4);
+    expect(text).toContain(MODEL_PRECISION_CLAUSE);
+    expect(text).toMatch(/nearest whole visit/i);
+    expect(text).toMatch(/etv/);
+  });
+
+  it("says nothing about an estimate the vendor never sent", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "kw", position: 5 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(MODEL_PRECISION_CLAUSE);
   });
 });

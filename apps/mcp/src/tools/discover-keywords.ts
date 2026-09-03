@@ -918,42 +918,53 @@ const FLAT_ZERO_COLUMNS: readonly FlatZeroColumn<DiscoverKeywordRow>[] = [
     misreadAs: "that nobody searches for any of these",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume,
+    // `vendorCount` prints this through `thousands` — Math.round plus digit grouping.
+    printedAs: Math.round,
   },
   {
     fieldLabel: "cpc",
     misreadAs: "that none of these keywords are worth anything to advertisers",
     nonEnglishEvidence: true,
     valueOf: (row) => row.cpc,
+    // `vendorNumber` prints the vendor float VERBATIM (String), so what is judged is what arrives.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "competition",
     misreadAs: "that no advertiser is bidding on any of these",
     nonEnglishEvidence: true,
     valueOf: (row) => row.competition,
+    // Verbatim, like every other `vendorNumber` column on this surface.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "keyword_difficulty",
     misreadAs: "that every one of these keywords is easy to rank for",
     nonEnglishEvidence: true,
     valueOf: (row) => row.keyword_difficulty,
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "search_volume_trend monthly",
     misreadAs: "that monthly demand for every one of these is perfectly flat",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume_trend?.monthly ?? null,
+    // `trendLeg` prints the signed vendor percentage verbatim.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "search_volume_trend quarterly",
     misreadAs: "that quarterly demand for every one of these is perfectly flat",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume_trend?.quarterly ?? null,
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "search_volume_trend yearly",
     misreadAs: "that yearly demand for every one of these is perfectly flat",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume_trend?.yearly ?? null,
+    printedAs: (value) => value,
   },
 ];
 

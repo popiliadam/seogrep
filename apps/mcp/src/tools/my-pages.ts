@@ -14,6 +14,7 @@ import {
   type RelevantPagesResult,
 } from "../dfs/relevant-pages.ts";
 import {
+  MODEL_PRECISION_CLAUSE,
   estimatedMonthlyCostUsd,
   estimatedVisitsPerMonth,
   exactCount,
@@ -734,8 +735,11 @@ export const VENDOR_JUDGEMENT_NOTE =
   "`etv` and `estimated_paid_traffic_cost` are DataForSEO's OWN ESTIMATES of monthly traffic and " +
   "of what that traffic would cost to buy — they are not measurements of your traffic, and " +
   "SeoGrep does not predict traffic, revenue or ranking success. Both are shown to the nearest " +
-  "whole visit and whole dollar: they come out of a model, and the further decimal places that " +
-  "model emits are not precision it has. The position buckets are a histogram of how " +
+  // The load-bearing half now comes from format/quantities.ts, so ranked_keywords' version of the
+  // same admission (finding B-5) cannot drift away from this one. The UNITS differ per surface;
+  // the reason does not, and it is the reason that was being written twice.
+  `whole visit and whole dollar: ${MODEL_PRECISION_CLAUSE}. The position buckets are a histogram ` +
+  "of how " +
   "many results of that type hold the page at each position band; they are not averaged into a " +
   '"position", because DataForSEO did not send one. A field DataForSEO did not report is shown ' +
   "as unreported, never as a zero. Pages are matched to your crawl by a normalised URL that " +
