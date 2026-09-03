@@ -30,6 +30,7 @@ import type { VendorWindow } from "../dfs/backlink-details.ts";
 // for these and cannot see them" is a second place for that promise to drift.
 import { renderOutputLimitNote } from "./backlink-details.ts";
 import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
 import {
   SEARCH_VOLUME_BAND_NOTE,
   SEARCH_VOLUME_DESCRIPTION_CLAUSE,
@@ -771,6 +772,27 @@ export const VENDOR_JUDGEMENT_NOTE =
   "decision. A field DataForSEO did not report is shown as unreported, never as a zero.";
 
 /** The "nothing came back" answer — a real, delivered result rather than an error. */
+/**
+ * H-3 — the default-locale warning, for the ONE mode that has a domain to argue from.
+ *
+ * `for_site` takes a target (or a project_id that resolves to one) and shares the en/2840 defaults
+ * with every other mode; the seed-driven modes are asked about KEYWORDS THE CALLER TYPED, and a
+ * domain's TLD says nothing about the locale those keywords belong to. Empty string for the other
+ * three, which the `filter(Boolean)` passes above already drop.
+ *
+ * NOT MEASURED on this tool: the 2026-09-03 round spent its paid ceiling on the other modes, so
+ * nothing here claims the failure was observed here — only that the SHAPE is the one that was
+ * measured costing 2 x 40 credits on `my_pages` (finding A-2). The sentence is the shared one.
+ */
+function localeWarningFor(
+  result: DiscoverKeywordsResult,
+  input: LookupLocale,
+): string {
+  return result.subject.mode === "for_site"
+    ? defaultLocaleWarning(result.subject.target, input)
+    : "";
+}
+
 function renderNoKeywords(
   result: DiscoverKeywordsResult,
   input: LookupLocale,
@@ -786,6 +808,7 @@ function renderNoKeywords(
     `DataForSEO returned no keyword for this lookup in the window that was asked for (offset ` +
       `${thousands(offset)}, limit ${thousands(limit)}). That is an answer about this window and ` +
       "these filters — it is not a statement that no such keywords exist.",
+    localeWarningFor(result, input),
   ]
     .filter((block) => block.length > 0)
     .join("\n\n");
@@ -983,6 +1006,7 @@ export function formatDiscoverKeywords(
     // BEFORE the rows, not after them: this is the sentence that decides whether the reader should
     // trust the list at all. Empty on the two modes it does not apply to.
     relevanceWarningFor(result.mode),
+    localeWarningFor(result, input),
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
   ].filter((block) => block.length > 0);

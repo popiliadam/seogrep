@@ -25,6 +25,7 @@ import {
   renderPositions,
   renderVendorPage,
 } from "./my-pages.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
 import {
   CRAWL_PAGE_READ_CAP,
   joinPages,
@@ -1333,5 +1334,57 @@ describe("S10d — my_pages' limit description states measured Labs behaviour", 
   it("says the row count moves the VENDOR's bill, and how much", () => {
     expect(limit).toMatch(/dataforseo'?s own bill/i);
     expect(limit).toMatch(/ten times it at 1000/i);
+  });
+});
+
+/**
+ * A-2 (P1) — THE US/ENGLISH DEFAULT, SAID OUT LOUD.
+ *
+ * MEASURED LIVE 2026-09-03: two paid calls against two Turkish sites — one with a 5-page crawl,
+ * one with a 100-page crawl — BOTH returned `vendor_total_count` 1 on the en/2840 default, and the
+ * only advice the answer offered was to advance `offset`, which does nothing when the vendor says
+ * the whole set is one row. 2 x 40 credits, and the reply never named the reason. The sibling
+ * `ranked_keywords` carries this lesson in its own source; `my_pages` had not inherited it.
+ *
+ * The sentence is SHARED (format/locale-default.ts), not copied: one domain owner must not be told
+ * four different things by four tools about one mistake.
+ */
+describe("my_pages — the default-locale warning (A-2)", () => {
+  const trResult = (): RelevantPagesResult => ({
+    ...resultWith([NO_METRICS]),
+    target: "adstark.com.tr",
+  });
+
+  it("warns when a country-code TLD was looked up on the default locale", () => {
+    const text = formatMyPages(trResult(), LOCALE, { kind: "not_requested" }, null);
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", LOCALE));
+    expect(text).toMatch(/\.tr domain/);
+    expect(text).toMatch(/country-code TLD/);
+  });
+
+  it("says nothing on a .com", () => {
+    const text = formatMyPages(resultWith([NO_METRICS]), LOCALE, { kind: "not_requested" }, null);
+    expect(text).not.toMatch(/country-code TLD/);
+  });
+
+  it("says nothing once the caller chose a locale", () => {
+    const text = formatMyPages(
+      trResult(),
+      { language_code: "tr", location_code: 2792 },
+      { kind: "not_requested" },
+      null,
+    );
+    expect(text).not.toMatch(/country-code TLD/);
+  });
+
+  /** The empty answer is the case the warning exists for, so it must be there too. */
+  it("warns on the answer that returned no page at all", () => {
+    const text = formatMyPages(
+      { ...trResult(), window: { ...trResult().window, window_row_count: 0, rows: [] } },
+      LOCALE,
+      { kind: "not_requested" },
+      null,
+    );
+    expect(text).toMatch(/country-code TLD/);
   });
 });

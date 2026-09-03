@@ -21,6 +21,7 @@ import {
   type DiscoverMode,
 } from "../dfs/discover-keywords.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
 import {
   SEARCH_VOLUME_BAND_NOTE,
   SEARCH_VOLUME_DESCRIPTION_CLAUSE,
@@ -1735,5 +1736,48 @@ describe("discover_keywords — the shared search-volume note (R-8.9)", () => {
     const description = makeDiscoverKeywordsTool().description;
     expect(description).toContain(SEARCH_VOLUME_DESCRIPTION_CLAUSE);
     expect(description).toMatch(/close variants/i);
+  });
+});
+
+/**
+ * H-3 — the fourth member of the default-locale class, and the one this round did NOT measure.
+ *
+ * `for_site` takes a `target`/`project_id` and shares the en/2840 defaults with every other mode.
+ * The paid ceiling was spent on other modes on 2026-09-03, so nothing here claims the failure was
+ * observed on this tool; the SHAPE is the same, and the same shared sentence covers it.
+ *
+ * The warning is bound to `for_site` alone: the seed-driven modes are asked about KEYWORDS the
+ * caller typed, so a domain's TLD says nothing about the locale those keywords belong to.
+ */
+describe("discover_keywords — the default-locale warning on for_site (H-3)", () => {
+  const forSite = (target: string): DiscoverKeywordsResult => {
+    const base = resultWith("for_site", [FULL_ROW]);
+    return { ...base, subject: { mode: "for_site", target, include_subdomains: true } };
+  };
+
+  it("warns when for_site resolved a country-code TLD on the default locale", () => {
+    const text = formatDiscoverKeywords(forSite("adstark.com.tr"), LOCALE);
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", LOCALE));
+    expect(text).toMatch(/\.tr domain/);
+  });
+
+  it("says nothing on a .com", () => {
+    expect(formatDiscoverKeywords(forSite("example.com"), LOCALE)).not.toMatch(/country-code TLD/);
+  });
+
+  it("says nothing once the caller chose a locale", () => {
+    const text = formatDiscoverKeywords(forSite("adstark.com.tr"), {
+      language_code: "tr",
+      location_code: 2792,
+    });
+    expect(text).not.toMatch(/country-code TLD/);
+  });
+
+  it("says nothing on the seed-driven modes, which have no domain to argue from", () => {
+    for (const mode of ["ideas", "suggestions", "related"] as const) {
+      expect(formatDiscoverKeywords(resultWith(mode, [FULL_ROW]), LOCALE)).not.toMatch(
+        /country-code TLD/,
+      );
+    }
   });
 });
