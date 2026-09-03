@@ -21,6 +21,12 @@ import {
   type DiscoverMode,
 } from "../dfs/discover-keywords.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
+import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
 import {
   MAX_RENDERED_OUTPUT_CHARS as BACKLINK_MAX_RENDERED_OUTPUT_CHARS,
   renderOutputLimitNote,
@@ -1704,5 +1710,92 @@ describe("S23.1' — the flat-zero notes on discover_keywords", () => {
       LOCALE,
     );
     expect(text.slice(text.indexOf(FLAT))).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+  });
+});
+
+/**
+ * R-8.9 — the shared search-volume note (finding DK-2). Every mode of this tool asks DataForSEO
+ * to order by `keyword_info.search_volume` desc, so both halves print: the disclosure, and the
+ * BAND half that says an order built on a rounded figure groups rows rather than ranking them.
+ */
+describe("discover_keywords — the shared search-volume note (R-8.9)", () => {
+  it("prints the shared note under a populated window", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", [FULL_ROW]), LOCALE);
+    expect(text).toContain(SEARCH_VOLUME_NOTE);
+    expect(text).toMatch(/close variants/i);
+    expect(text).toMatch(/12[- ]month/i);
+  });
+
+  it("prints the band note, because every mode is ordered by that figure", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", [FULL_ROW]), LOCALE);
+    expect(text).toContain(SEARCH_VOLUME_BAND_NOTE);
+    expect(text).toMatch(/band/i);
+  });
+
+  it("carries the clause in the tool description too", () => {
+    const description = makeDiscoverKeywordsTool().description;
+    expect(description).toContain(SEARCH_VOLUME_DESCRIPTION_CLAUSE);
+    expect(description).toMatch(/close variants/i);
+  });
+});
+
+/**
+ * H-3 — the fourth member of the default-locale class, and the one this round did NOT measure.
+ *
+ * `for_site` takes a `target`/`project_id` and shares the en/2840 defaults with every other mode.
+ * The paid ceiling was spent on other modes on 2026-09-03, so nothing here claims the failure was
+ * observed on this tool; the SHAPE is the same, and the same shared sentence covers it.
+ *
+ * The warning is bound to `for_site` alone: the seed-driven modes are asked about KEYWORDS the
+ * caller typed, so a domain's TLD says nothing about the locale those keywords belong to.
+ */
+describe("discover_keywords — the default-locale warning on for_site (H-3)", () => {
+  const forSite = (target: string): DiscoverKeywordsResult => {
+    const base = resultWith("for_site", [FULL_ROW]);
+    return { ...base, subject: { mode: "for_site", target, include_subdomains: true } };
+  };
+
+  it("warns when for_site resolved a country-code TLD on the default locale", () => {
+    const text = formatDiscoverKeywords(forSite("adstark.com.tr"), LOCALE);
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", LOCALE));
+    expect(text).toMatch(/\.tr domain/);
+  });
+
+  it("says nothing on a .com", () => {
+    expect(formatDiscoverKeywords(forSite("example.com"), LOCALE)).not.toMatch(/country-code TLD/);
+  });
+
+  it("says nothing once the caller chose a locale", () => {
+    const text = formatDiscoverKeywords(forSite("adstark.com.tr"), {
+      language_code: "tr",
+      location_code: 2792,
+    });
+    expect(text).not.toMatch(/country-code TLD/);
+  });
+
+  /**
+   * THE EMPTY ANSWER, which is the one the warning exists for: a for_site lookup that came back
+   * with nothing on the US default reads as "DataForSEO knows no keywords for this domain". This
+   * path renders through `renderNoKeywords`, a DIFFERENT block list from the populated one — and
+   * it was unpinned: deleting the warning from that branch left all 124 specs green (referee,
+   * 2026-09-03), which is the "green for the wrong reason" shape lesson 12 names.
+   */
+  it("warns on the for_site answer that returned no keyword at all", () => {
+    const empty = forSite("adstark.com.tr");
+    const text = formatDiscoverKeywords(
+      { ...empty, window: { ...empty.window, window_row_count: 0, rows: [] } },
+      LOCALE,
+    );
+    expect(text).toMatch(/no keywords for/i);
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", LOCALE));
+    expect(text).toMatch(/country-code TLD/);
+  });
+
+  it("says nothing on the seed-driven modes, which have no domain to argue from", () => {
+    for (const mode of ["ideas", "suggestions", "related"] as const) {
+      expect(formatDiscoverKeywords(resultWith(mode, [FULL_ROW]), LOCALE)).not.toMatch(
+        /country-code TLD/,
+      );
+    }
   });
 });

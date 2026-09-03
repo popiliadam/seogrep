@@ -192,10 +192,13 @@ describe("flatZeroNotes — several flat columns at once", () => {
     readonly b: number | null;
     readonly c: number | null;
   }
+  // These specs are about the per-column bounds, not about rounding, so every column here declares
+  // the identity `printedAs` — the values below are already the values a row would print.
+  const raw = (value: number): number => value;
   const COLUMNS = [
-    { fieldLabel: "a", misreadAs: "A", nonEnglishEvidence: true, valueOf: (r: Row) => r.a },
-    { fieldLabel: "b", misreadAs: "B", nonEnglishEvidence: true, valueOf: (r: Row) => r.b },
-    { fieldLabel: "c", misreadAs: "C", nonEnglishEvidence: true, valueOf: (r: Row) => r.c },
+    { fieldLabel: "a", misreadAs: "A", nonEnglishEvidence: true, valueOf: (r: Row) => r.a, printedAs: raw },
+    { fieldLabel: "b", misreadAs: "B", nonEnglishEvidence: true, valueOf: (r: Row) => r.b, printedAs: raw },
+    { fieldLabel: "c", misreadAs: "C", nonEnglishEvidence: true, valueOf: (r: Row) => r.c, printedAs: raw },
   ] as const;
   const labelsOf = (notes: readonly string[]): string[] =>
     notes.map((n) => /DataForSEO reported (\S+) 0/.exec(n)?.[1] ?? "?");
@@ -242,3 +245,64 @@ describe("flatZeroNotes — several flat columns at once", () => {
   });
 });
 
+
+/**
+ * B-2 — THE VALUE THE NOTE JUDGES MUST BE THE VALUE THE READER SEES.
+ *
+ * MEASURED LIVE 2026-09-03 on ranked_keywords: three rows came back with `etv` between 0 and 0.5,
+ * all three printed `est. traffic 0/mo`, and the flat-zero note stayed SILENT — it was testing the
+ * raw vendor float (`=== 0`) while the row printed `Math.round` of it. The note's own sentence says
+ * "DataForSEO reported <field> 0 for every one of the N keywords above", so a reader looking at a
+ * column of zeros with no note beside it learns that silence means "measured" — which is the exact
+ * lesson this module exists to prevent it teaching.
+ *
+ * The fix is a DECLARATION, not a guess: each column says how its value reaches the page, and the
+ * note is measured over that. `printedAs` is the surface's own rounding, never a new one.
+ */
+describe("flatZeroNotes — the note judges the PRINTED value (B-2)", () => {
+  interface Row {
+    readonly etv: number | null;
+  }
+  const ROUNDED = [
+    {
+      fieldLabel: "est. traffic",
+      misreadAs: "that none of these rankings bring you any visitors",
+      nonEnglishEvidence: false,
+      valueOf: (r: Row) => r.etv,
+      printedAs: Math.round,
+    },
+  ] as const;
+
+  it("fires on a column that PRINTS 0 on every row, even though no raw value is 0", () => {
+    const rows: Row[] = [{ etv: 0.3 }, { etv: 0.49 }];
+    expect(flatZeroNotes(rows, ROUNDED, "keywords")).toHaveLength(1);
+  });
+
+  it("stays silent as soon as one row prints something other than 0", () => {
+    const rows: Row[] = [{ etv: 0.3 }, { etv: 1.2 }];
+    expect(flatZeroNotes(rows, ROUNDED, "keywords")).toEqual([]);
+  });
+
+  it("still fires on genuine zeros — rounding adds a case, it removes none", () => {
+    expect(flatZeroNotes([{ etv: 0 }, { etv: 0 }], ROUNDED, "keywords")).toHaveLength(1);
+  });
+
+  it("leaves nulls alone: an unreported row is not rounded into a zero", () => {
+    // One reported value is below MIN_FLAT_ZERO_ROWS, so silence — not a note about one row.
+    expect(flatZeroNotes([{ etv: 0.3 }, { etv: null }], ROUNDED, "keywords")).toEqual([]);
+  });
+
+  /** A column the surface prints UNROUNDED declares identity, and keeps the old behaviour. */
+  it("does not round a column whose surface prints the raw vendor number", () => {
+    const RAW = [
+      {
+        fieldLabel: "cpc",
+        misreadAs: "that none of these are worth anything to advertisers",
+        nonEnglishEvidence: true,
+        valueOf: (r: Row) => r.etv,
+        printedAs: (value: number) => value,
+      },
+    ] as const;
+    expect(flatZeroNotes([{ etv: 0.3 }, { etv: 0.49 }], RAW, "keywords")).toEqual([]);
+  });
+});

@@ -27,6 +27,12 @@ import {
   type DomainLookupRunWriter,
 } from "../dfs/runs.ts";
 import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
+import {
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
+import { MODEL_PRECISION_CLAUSE } from "../format/quantities.ts";
+import { twoLetterTld } from "../format/locale-default.ts";
 import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
@@ -129,7 +135,8 @@ const DESCRIPTION =
   "to look up one of your own sites. " +
   `Synchronous — returns a table immediately. Costs ${TOOL_COSTS.ranked_keywords} credits. Needs ` +
   "a paid credit balance: it is not available on trial credits. If live DataForSEO access is " +
-  "unavailable on this deployment, the tool says so and charges nothing.";
+  "unavailable on this deployment, the tool says so and charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /**
  * Group digits with commas without depending on ICU/locale data (deterministic). Kept local
@@ -404,26 +411,48 @@ const FLAT_ZERO_COLUMNS: readonly FlatZeroColumn<RankedKeywordRow>[] = [
     misreadAs: "that nobody searches for any of these",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume,
+    // `renderRow` prints this through `thousands`, which is Math.round + digit grouping.
+    printedAs: Math.round,
   },
   {
     fieldLabel: "CPC",
     misreadAs: "that none of these keywords are worth anything to advertisers",
     nonEnglishEvidence: true,
     valueOf: (row) => row.cpc,
+    // `money` keeps CENTS — a quoted price's own unit (format/quantities.ts, class 3's contrast).
+    // So a cpc of 0.004 prints "$0.00" and IS a printed zero here.
+    printedAs: (value) => Number(value.toFixed(2)),
   },
   {
     fieldLabel: "difficulty",
     misreadAs: "that every one of these keywords is easy to rank for",
     nonEnglishEvidence: true,
     valueOf: (row) => row.keyword_difficulty,
+    // Printed verbatim as `difficulty N/100`; the vendor sends this one as an integer already.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "est. traffic",
     misreadAs: "that none of these rankings bring you any visitors",
     nonEnglishEvidence: false,
     valueOf: (row) => row.etv,
+    // `est. traffic N/mo`, also through `thousands`. THIS is the column finding B-2 was measured
+    // on: three live rows at 0 < etv < 0.5 all printed 0 and said nothing.
+    printedAs: Math.round,
   },
 ];
+
+/**
+ * WHAT `est. traffic` IS AND WHAT ITS DIGITS ARE WORTH (finding B-5).
+ *
+ * The sibling `my_pages` prints the same DataForSEO field, rounds it the same way, and has always
+ * told the reader so; this surface rounded silently. Composed around the SHARED clause in
+ * format/quantities.ts rather than restating it, so the two admissions cannot drift into saying
+ * different things about one number.
+ */
+export const ETV_PRECISION_NOTE =
+  "`est. traffic` is DataForSEO's own `etv` — its ESTIMATE of the monthly visits that ranking " +
+  `earns, not a measurement of your traffic. It is shown to the nearest whole visit: ${MODEL_PRECISION_CLAUSE}.`;
 
 /** Render the ranked keywords as the plain-text tool output (pure — unit-tested directly). */
 export function formatRankedKeywords(
@@ -471,53 +500,32 @@ export function formatRankedKeywords(
   // `!== null` tests in renderRow still decide whether a number appears at all, and every 0 still
   // prints exactly as the vendor sent it.
   const flat = flatZeroNotes(result.rows, FLAT_ZERO_COLUMNS, "keywords");
-  return flat.length === 0 ? withHint : `${withHint}\n\n${flat.join("\n\n")}`;
+  // R-8.9, from the constant four tools share (format/search-volume.ts) — finding B-3. Only the
+  // disclosure half: these rows are ordered by the caller's own `sort` (or the vendor's default),
+  // NOT by search_volume, so the band sentence would describe an ordering this tool never makes.
+  const withVolumeNote = `${withHint}\n\n${SEARCH_VOLUME_NOTE}`;
+  // B-5. The `est. traffic` column is `etv` rounded to a whole visit, and until now this surface
+  // rounded it and said nothing while the sibling `my_pages` said so plainly about the same vendor
+  // field. Printed only when at least one row actually carried an estimate: an admission about a
+  // column nobody was shown is noise. The load-bearing clause is the SHARED one.
+  const withEtvNote =
+    result.rows.some((row) => row.etv !== null)
+      ? `${withVolumeNote}\n\n${ETV_PRECISION_NOTE}`
+      : withVolumeNote;
+  return flat.length === 0 ? withEtvNote : `${withEtvNote}\n\n${flat.join("\n\n")}`;
 }
 
 /**
- * Two-letter TLDs that IANA delegated to a country but whose registries sell them worldwide with
- * no local-presence requirement, and whose registrants are overwhelmingly not in that country.
+ * The country-code-TLD test now lives in format/locale-default.ts, together with the exclusion
+ * list and the "never guess a location_code" rule this tool wrote first.
  *
- * They break the two-letter test in the direction that MATTERS. Telling the owner of a `.io` SaaS
- * that their domain is "a two-letter country-code TLD" and that they should pass the location
- * code for "that country" is advice about the British Indian Ocean Territory — a wrong claim
- * stated in the confident voice the rest of the hint earns, and stated exactly when the result
- * was thin and the reader is most inclined to act on it.
- *
- * The list is short and deliberately errs toward EXCLUDING: a genuinely Colombian `.co` site
- * loses the TLD sentence but still gets the generic locale hint below, which is the whole
- * actionable half. Dropping a true clue costs a sentence; keeping a false one costs the reader
- * a 65-credit lookup pointed at the wrong country.
+ * IT MOVED RATHER THAN BEING COPIED (finding H-3). Until 2026-09-03 this file held the ONLY copy
+ * in the tree, and three sibling tools ran the same paid lookup on the same en/2840 default with
+ * no sentence at all — one of them measured costing 2 x 40 credits (my_pages, A-2). Four tools
+ * telling one domain owner four different things about one mistake is the failure mode; the
+ * helper is therefore shared and this tool's own TRIGGER (a thin result) stays here, because it
+ * is a different question from "is this a ccTLD" and its specs pin the answer.
  */
-const GENERIC_TWO_LETTER_TLDS: ReadonlySet<string> = new Set([
-  "io",
-  "ai",
-  "co",
-  "me",
-  "tv",
-  "cc",
-  "fm",
-  "gg",
-  "ly",
-  "sh",
-  "to",
-]);
-
-/**
- * The domain's TLD when it is two letters AND is not one of the generically-marketed ones above,
- * otherwise null.
- *
- * Two letters is otherwise the whole test, and it is the whole claim the hint makes: IANA
- * delegates country-code TLDs as two-letter labels. What this deliberately does NOT do is map
- * that label to a DataForSEO location_code. Exactly two codes have been measured here (US 2840,
- * TR 2792) — that is a pair of data points, not a table — and a guessed code does not fail
- * loudly: it returns another country's rankings, which read as perfectly ordinary data.
- */
-function twoLetterTld(domain: string): string | null {
-  const tld = domain.slice(domain.lastIndexOf(".") + 1).toLowerCase();
-  if (!/^[a-z]{2}$/.test(tld)) return null;
-  return GENERIC_TWO_LETTER_TLDS.has(tld) ? null : tld;
-}
 
 /**
  * The locale caveat, appended ONLY when the result is thin AND the caller never chose a locale.

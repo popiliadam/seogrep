@@ -30,6 +30,12 @@ import type { VendorWindow } from "../dfs/backlink-details.ts";
 // for these and cannot see them" is a second place for that promise to drift.
 import { renderOutputLimitNote } from "./backlink-details.ts";
 import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
+import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
 import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
@@ -420,7 +426,8 @@ const DESCRIPTION =
   "recommends nothing. Synchronous — everything comes back immediately. Costs " +
   `${TOOL_COSTS.discover_keywords} credits. Needs a paid credit balance: it is not available on ` +
   "trial credits. If live DataForSEO access is unavailable on this deployment, the tool says so " +
-  "and charges nothing.";
+  "and charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /** Group digits with commas without depending on ICU/locale data (deterministic). */
 function thousands(value: number): string {
@@ -765,6 +772,27 @@ export const VENDOR_JUDGEMENT_NOTE =
   "decision. A field DataForSEO did not report is shown as unreported, never as a zero.";
 
 /** The "nothing came back" answer — a real, delivered result rather than an error. */
+/**
+ * H-3 — the default-locale warning, for the ONE mode that has a domain to argue from.
+ *
+ * `for_site` takes a target (or a project_id that resolves to one) and shares the en/2840 defaults
+ * with every other mode; the seed-driven modes are asked about KEYWORDS THE CALLER TYPED, and a
+ * domain's TLD says nothing about the locale those keywords belong to. Empty string for the other
+ * three, which the `filter(Boolean)` passes above already drop.
+ *
+ * NOT MEASURED on this tool: the 2026-09-03 round spent its paid ceiling on the other modes, so
+ * nothing here claims the failure was observed here — only that the SHAPE is the one that was
+ * measured costing 2 x 40 credits on `my_pages` (finding A-2). The sentence is the shared one.
+ */
+function localeWarningFor(
+  result: DiscoverKeywordsResult,
+  input: LookupLocale,
+): string {
+  return result.subject.mode === "for_site"
+    ? defaultLocaleWarning(result.subject.target, input)
+    : "";
+}
+
 function renderNoKeywords(
   result: DiscoverKeywordsResult,
   input: LookupLocale,
@@ -780,6 +808,7 @@ function renderNoKeywords(
     `DataForSEO returned no keyword for this lookup in the window that was asked for (offset ` +
       `${thousands(offset)}, limit ${thousands(limit)}). That is an answer about this window and ` +
       "these filters — it is not a statement that no such keywords exist.",
+    localeWarningFor(result, input),
   ]
     .filter((block) => block.length > 0)
     .join("\n\n");
@@ -805,11 +834,11 @@ function renderNoKeywords(
  *
  * WHERE THE NUMBER COMES FROM — the arithmetic, from the table above:
  *
- *   worst DEFAULT render (ideas, 100 rows)               33,447
+ *   worst DEFAULT render (ideas, 100 rows)               34,168
  *   + the output-limit note reserved at its widest          805
  *   ------------------------------------------------------------
- *   what a default lookup must be allowed to print       34,252
- *   + headroom for longer keywords than the fixtures'     5,748   (~19 more rows)
+ *   what a default lookup must be allowed to print       34,973
+ *   + headroom for longer keywords than the fixtures'     5,027   (~16 more rows)
  *   ------------------------------------------------------------
  *   MAX_RENDERED_OUTPUT_CHARS                            40,000
  *
@@ -912,42 +941,53 @@ const FLAT_ZERO_COLUMNS: readonly FlatZeroColumn<DiscoverKeywordRow>[] = [
     misreadAs: "that nobody searches for any of these",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume,
+    // `vendorCount` prints this through `thousands` — Math.round plus digit grouping.
+    printedAs: Math.round,
   },
   {
     fieldLabel: "cpc",
     misreadAs: "that none of these keywords are worth anything to advertisers",
     nonEnglishEvidence: true,
     valueOf: (row) => row.cpc,
+    // `vendorNumber` prints the vendor float VERBATIM (String), so what is judged is what arrives.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "competition",
     misreadAs: "that no advertiser is bidding on any of these",
     nonEnglishEvidence: true,
     valueOf: (row) => row.competition,
+    // Verbatim, like every other `vendorNumber` column on this surface.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "keyword_difficulty",
     misreadAs: "that every one of these keywords is easy to rank for",
     nonEnglishEvidence: true,
     valueOf: (row) => row.keyword_difficulty,
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "search_volume_trend monthly",
     misreadAs: "that monthly demand for every one of these is perfectly flat",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume_trend?.monthly ?? null,
+    // `trendLeg` prints the signed vendor percentage verbatim.
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "search_volume_trend quarterly",
     misreadAs: "that quarterly demand for every one of these is perfectly flat",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume_trend?.quarterly ?? null,
+    printedAs: (value) => value,
   },
   {
     fieldLabel: "search_volume_trend yearly",
     misreadAs: "that yearly demand for every one of these is perfectly flat",
     nonEnglishEvidence: true,
     valueOf: (row) => row.search_volume_trend?.yearly ?? null,
+    printedAs: (value) => value,
   },
 ];
 
@@ -966,6 +1006,7 @@ export function formatDiscoverKeywords(
     // BEFORE the rows, not after them: this is the sentence that decides whether the reader should
     // trust the list at all. Empty on the two modes it does not apply to.
     relevanceWarningFor(result.mode),
+    localeWarningFor(result, input),
     renderCriteria(result, input),
     renderDiscoveryCaption(result.window),
   ].filter((block) => block.length > 0);
@@ -980,7 +1021,14 @@ export function formatDiscoverKeywords(
   // hard truncation that leaves fewer than MIN_FLAT_ZERO_ROWS printed values in a column, that
   // column correctly says nothing at all and simply gives its reserved room back to the rows.
   const flatReserve = flatZeroNotes(rows, FLAT_ZERO_COLUMNS, "keywords");
-  const after = [VENDOR_JUDGEMENT_NOTE, ...flatReserve];
+  // R-8.9 (finding DK-2), from the constant four tools share (format/search-volume.ts). BOTH
+  // halves print here: every mode of this tool asks DataForSEO to order by
+  // `keyword_info.search_volume` desc, so the rounding is a fact about the ORDER as well as about
+  // each figure. Measured live 2026-09-03 (ideas, tr/2792): 100 rows carried FOUR distinct volumes
+  // — 90,500 x18, 74,000 x21, 60,500 x24, 49,500 x37 — so "highest first" separated 4 rows of 100.
+  // Their length is FIXED, so they are booked in the reserve exactly as they print.
+  const volumeNotes = [SEARCH_VOLUME_NOTE, SEARCH_VOLUME_BAND_NOTE];
+  const after = [VENDOR_JUDGEMENT_NOTE, ...volumeNotes, ...flatReserve];
   // THE BUDGET IS WHAT THE PROSE LEAVES, not a fixed split. The prose is not a constant here — the
   // relevance warning appears on two modes of four, the criteria line has four ceiling variants,
   // and the heading carries the caller's own seeds — so a fixed row budget would hold on one mode
@@ -1006,6 +1054,7 @@ export function formatDiscoverKeywords(
       ? []
       : [renderOutputLimitNote("keyword", shown.printed, shown.omitted, TRUNCATION_ADVICE)]),
     VENDOR_JUDGEMENT_NOTE,
+    ...volumeNotes,
     // AT THE VERY END, one per flat column, in the order the columns are PRINTED on the rows —
     // see format/flat-zero.ts for what was measured and what these sentences are forbidden to
     // claim. They add a reading note beside the zeros and rewrite none of them.

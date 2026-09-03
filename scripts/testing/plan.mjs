@@ -123,9 +123,29 @@ export const EXCLUDED = Object.freeze({
 
   // ---- Paid. Each line carries the signed per-call price, because the reason a cell is not
   // bought is the price times the site count, and that number should not need looking up.
-  discover_keywords: "paid, 40 credits/call and a DataForSEO Labs request. Needs an operator budget signature (NEVER #6).",
-  my_pages: "paid, 40 credits/call and a DataForSEO Labs request. Needs an operator budget signature.",
-  keyword_gap: "paid, 45 credits/call. Also requires a competitor domain per site — a per-site input the matrix does not yet carry.",
+  // THE BUDGET-SIGNATURE HALF OF THESE FOUR LINES IS GONE, and saying so is the point: the
+  // operator signed the credit budget on 2026-09-02, and all four ran PAID on 2026-09-03 during
+  // the tool round (records under docs/audits/tools/2026-09/). A reason that has stopped being
+  // true is worse than no reason — nobody re-reads it, and it keeps a cell excluded for a
+  // constraint that was lifted (signed lesson 16). What is left is the reason that is still real,
+  // and in every case it is a PER-SITE INPUT the matrix does not carry, not a price.
+  discover_keywords:
+    "paid, 40 credits/call and a DataForSEO Labs request. The budget signature arrived 2026-09-02 " +
+    "and the tool ran paid on 2026-09-03; what still blocks a sweep cell is the LOCALE — `ideas` " +
+    "and `for_site` were measured returning off-subject national queries when asked on the shared " +
+    "en/2840 default, so eight cells bought on that default would mostly measure that. Include " +
+    "when the matrix carries a per-site language_code/location_code.",
+  my_pages:
+    "paid, 40 credits/call and a DataForSEO Labs request. The budget signature arrived 2026-09-02 " +
+    "and the tool ran paid twice on 2026-09-03; what still blocks a cell is the same per-site " +
+    "LOCALE — both Turkish subjects came back with a single vendor row on the en/2840 default " +
+    "(finding A-2), so a sweep on the default would measure the default rather than the tool.",
+  keyword_gap:
+    "paid, 45 credits/call. The budget signature arrived 2026-09-02 and the tool ran paid on " +
+    "2026-09-03; the live blocker is unchanged — a competitor domain PER SITE, an input the " +
+    "matrix does not yet carry. That round showed a competitor can be chosen measurably (sector " +
+    "+ language + a live HTTP check), so this is a missing matrix column and not an impossibility: " +
+    "add `competitor` to SITES and the cell becomes includable.",
   link_gap: "paid, 45 credits/call. Same missing per-site competitor input as keyword_gap.",
   backlink_changes: "paid, 35 credits/call against the DataForSEO backlinks API. Needs a budget signature.",
   backlink_details: "paid, 35 credits/call against the DataForSEO backlinks API. Needs a budget signature.",
@@ -138,7 +158,12 @@ export const EXCLUDED = Object.freeze({
     "is established and the margin re-signed.",
   ai_visibility_compare: "paid, 90 credits PER TARGET over 2-10 targets. Blocked by H-01 exactly as ai_visibility is.",
   keyword_positions: "paid, 10 credits/call, and it only returns anything for keywords track_keywords registered first — which is itself excluded above.",
-  serp_snapshot: "paid, 5 + 8 per keyword over 1-10 keywords. Needs a budget signature and a per-site keyword list.",
+  serp_snapshot:
+    "paid, 5 + 8 per keyword over 1-10 keywords. BOTH halves of the old reason are gone: the " +
+    "budget signature arrived 2026-09-02, and the keyword list is not missing either — the round " +
+    "of 2026-09-03 ran this paid against a site's already-tracked keywords. What is left is " +
+    "cost alone: at least 13 credits per site plus the vendor's own fee, across eight sites, " +
+    "every time the sweep runs. Excluded because it is EXPENSIVE, not because it is unsigned.",
 });
 
 /**

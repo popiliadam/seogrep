@@ -268,6 +268,21 @@ export function domainAddressableTools(allTools) {
   return names.map((name) => `[\`${name}\`](/docs/tools-reference/${deriveSlug(name)})`).join(", ");
 }
 
+/**
+ * A prose constant imported from the built MCP registry, refused when it is missing or empty.
+ *
+ * Fail-closed for `positiveInteger`'s reason, one class over: a token nobody substitutes would
+ * render the literal `{{SEARCH_VOLUME_NOTE}}` onto a published page, and an EMPTY constant would
+ * render nothing at all — silently deleting the disclosure this token exists to publish, on a page
+ * whose only signal that anything is wrong would be a missing sentence nobody remembers.
+ */
+export function nonEmptyProse(value, token, name) {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${token}: \`${name}\` is not a non-empty string (got ${JSON.stringify(value)}).`);
+  }
+  return value;
+}
+
 export function substituteProseTokens(text, constants) {
   const {
     maxRowLimit,
@@ -276,8 +291,19 @@ export function substituteProseTokens(text, constants) {
     maxSerpKeywords,
     crawlTimeBudgetSeconds,
     domainTools,
+    searchVolumeNote,
+    searchVolumeBandNote,
   } = constants || {};
   const out = String(text)
+    // R-8.9. The SAME string the four tool OUTPUTS print (apps/mcp/src/format/search-volume.ts),
+    // not a docs-side paraphrase of it: the whole point of the constant is that one vendor figure
+    // cannot be explained one way in the reply and another way on the page. Fail-closed below.
+    .replace(/\{\{SEARCH_VOLUME_NOTE\}\}/g, () =>
+      nonEmptyProse(searchVolumeNote, "{{SEARCH_VOLUME_NOTE}}", "searchVolumeNote"),
+    )
+    .replace(/\{\{SEARCH_VOLUME_BAND_NOTE\}\}/g, () =>
+      nonEmptyProse(searchVolumeBandNote, "{{SEARCH_VOLUME_BAND_NOTE}}", "searchVolumeBandNote"),
+    )
     .replace(/\{\{MAX_GSC_ROWS\}\}/g, () =>
       groupThousands(positiveInteger(maxRowLimit, "{{MAX_GSC_ROWS}}", "maxRowLimit")),
     )
@@ -1594,7 +1620,7 @@ export const DOC_PROSE = {
     whatItDoes:
       "Given a list of keywords (plus an optional language and location), it returns one row per " +
       "keyword with:\n\n" +
-      "- **Search volume** — average monthly Google searches.\n" +
+      "- **Search volume** — average monthly Google searches. {{SEARCH_VOLUME_NOTE}}\n" +
       "- **CPC** — the average cost-per-click advertisers pay.\n" +
       "- **Competition** — the advertiser competition band (`HIGH` / `MEDIUM` / `LOW`).\n" +
       "- **Keyword difficulty** — how hard the keyword is to rank for, on a 0–100 scale.\n" +
@@ -1801,6 +1827,7 @@ export const DOC_PROSE = {
           "the rows come back in the one vendor order the tool asks for — by DataForSEO's own " +
           "`keyword_info.search_volume`, highest first — and the output names that field so you " +
           "know what \"first\" means.\n\n" +
+          "{{SEARCH_VOLUME_NOTE}} {{SEARCH_VOLUME_BAND_NOTE}}\n\n" +
           "`keyword_difficulty` is **DataForSEO's own 0–100 estimate about the search results** for " +
           "a keyword. It is not a forecast of where your site would rank, not a promise that a low " +
           "number is winnable, and neither DataForSEO nor SeoGrep can tell you what traffic any of " +
@@ -2076,7 +2103,8 @@ export const DOC_PROSE = {
       "page — `position #3 organic (#4 on the page)`. Those are two different numbers in the same " +
       "response: the first is what stays comparable over time, the second is how far a reader " +
       "actually scrolls. When they agree, only one is printed.\n" +
-      "- **Search volume** — average monthly Google searches for that keyword.\n" +
+      "- **Search volume** — average monthly Google searches for that keyword. " +
+      "{{SEARCH_VOLUME_NOTE}}\n" +
       "- **CPC** and **competition** — the advertiser bid and the HIGH/MEDIUM/LOW band. They come " +
       "with this lookup, so you do not need a separate `research_keywords` call to get them for a " +
       "keyword you already rank for.\n" +
@@ -2367,7 +2395,7 @@ export const DOC_PROSE = {
       "Each row carries:\n\n" +
       "- **Keyword** — the query the competitor ranks for.\n" +
       "- **Search volume** — average monthly Google searches, and the order the list is sorted " +
-      "in, biggest opportunity first.\n" +
+      "in, biggest opportunity first. {{SEARCH_VOLUME_NOTE}} {{SEARCH_VOLUME_BAND_NOTE}}\n" +
       "- **The competitor's position** — where the rival ranks in the organic results.\n" +
       "- **Keyword difficulty** — how hard the keyword is to rank for, on a 0–100 scale.\n" +
       "- **CPC and competition band** — what advertisers pay for the same query, when DataForSEO " +
@@ -3742,6 +3770,9 @@ async function loadRegistry() {
   // page publishes its answer, so a tool moving in or out of the trial gate re-renders the docs and
   // turns --check red — instead of a hand-kept list quietly disagreeing with the runtime.
   const paidBalanceUrl = new URL("../../mcp/dist/credits/paid-balance.js", import.meta.url);
+  // The R-8.9 disclosure four tools print. Read from the SAME module the runtime prints it from,
+  // so the docs page and the tool reply cannot describe one vendor figure two different ways.
+  const searchVolumeUrl = new URL("../../mcp/dist/format/search-volume.js", import.meta.url);
   try {
     const tools = await import(toolsUrl);
     const costs = await import(costsUrl);
@@ -3750,6 +3781,7 @@ async function loadRegistry() {
     const tracked = await import(trackedUrl);
     const crawler = await import(crawlerUrl);
     const paidBalance = await import(paidBalanceUrl);
+    const searchVolume = await import(searchVolumeUrl);
     return {
       ALL_TOOLS: tools.ALL_TOOLS,
       TOOL_COSTS: costs.TOOL_COSTS,
@@ -3767,6 +3799,8 @@ async function loadRegistry() {
         crawlTimeBudgetSeconds: Math.round(crawler.DEFAULT_TIME_BUDGET_MS / 1000),
         // Derived from the registry itself — see domainAddressableTools for why it is not a list.
         domainTools: domainAddressableTools(tools.ALL_TOOLS),
+        searchVolumeNote: searchVolume.SEARCH_VOLUME_NOTE,
+        searchVolumeBandNote: searchVolume.SEARCH_VOLUME_BAND_NOTE,
       },
     };
   } catch (error) {

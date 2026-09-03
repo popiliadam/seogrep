@@ -17,7 +17,7 @@ Then one row per ranked keyword:
 
 - **Keyword** — the query the domain ranks for.
 - **Position** — its rank among the **organic** results. When a SERP feature (a featured snippet, an answer box, an ad block) sits above it, the reply also gives the rank on the page — `position #3 organic (#4 on the page)`. Those are two different numbers in the same response: the first is what stays comparable over time, the second is how far a reader actually scrolls. When they agree, only one is printed.
-- **Search volume** — average monthly Google searches for that keyword.
+- **Search volume** — average monthly Google searches for that keyword. About these search volumes: they are Google Keyword Planner figures, passed through from DataForSEO unchanged. Each one is a 12-MONTH AVERAGE for the keyword AND ITS CLOSE VARIANTS, and Google ROUNDS it — so a volume here is not a count of exact-match searches in the month just gone, two keywords can share a figure only because both were rounded onto it, and volumes added up across rows or across locations will not come out exact.
 - **CPC** and **competition** — the advertiser bid and the HIGH/MEDIUM/LOW band. They come with this lookup, so you do not need a separate `research_keywords` call to get them for a keyword you already rank for.
 - **Difficulty** and **intent** — how hard the keyword is to rank for (0–100) and what searchers want from it. The same two figures `research_keywords` reports, in the same words, without a second call.
 - **Estimated traffic** — DataForSEO's estimate of the monthly visits *this ranking* earns. Usually a sharper priority signal than position and volume read separately.

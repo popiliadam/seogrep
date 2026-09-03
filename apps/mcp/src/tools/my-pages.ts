@@ -13,7 +13,9 @@ import {
   type RelevantPagesPort,
   type RelevantPagesResult,
 } from "../dfs/relevant-pages.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
 import {
+  MODEL_PRECISION_CLAUSE,
   estimatedMonthlyCostUsd,
   estimatedVisitsPerMonth,
   exactCount,
@@ -734,8 +736,11 @@ export const VENDOR_JUDGEMENT_NOTE =
   "`etv` and `estimated_paid_traffic_cost` are DataForSEO's OWN ESTIMATES of monthly traffic and " +
   "of what that traffic would cost to buy — they are not measurements of your traffic, and " +
   "SeoGrep does not predict traffic, revenue or ranking success. Both are shown to the nearest " +
-  "whole visit and whole dollar: they come out of a model, and the further decimal places that " +
-  "model emits are not precision it has. The position buckets are a histogram of how " +
+  // The load-bearing half now comes from format/quantities.ts, so ranked_keywords' version of the
+  // same admission (finding B-5) cannot drift away from this one. The UNITS differ per surface;
+  // the reason does not, and it is the reason that was being written twice.
+  `whole visit and whole dollar: ${MODEL_PRECISION_CLAUSE}. The position buckets are a histogram ` +
+  "of how " +
   "many results of that type hold the page at each position band; they are not averaged into a " +
   '"position", because DataForSEO did not send one. A field DataForSEO did not report is shown ' +
   "as unreported, never as a zero. Pages are matched to your crawl by a normalised URL that " +
@@ -754,13 +759,18 @@ function renderNoPages(
     `No pages for ${subjectLabel(result.target, project)} — DataForSEO Labs relevant_pages.`,
     WHAT_THE_VENDOR_RETURNS,
     renderCriteria(result, input),
+    // A-2, and this is the answer the warning exists for: an empty reply on the US default reads
+    // as "this domain has no ranking pages". Empty blocks are dropped by the filter below.
+    defaultLocaleWarning(result.target, input),
     `DataForSEO returned no page for this lookup in the window that was asked for (offset ` +
       `${exactCount(result.window.window_offset)}, limit ` +
       `${exactCount(result.window.window_limit)}). That is an answer about this window, these ` +
       "result types and these filters — it is not a statement that the domain has no ranking " +
       "pages.",
     renderComparison(result, crawl),
-  ].join("\n\n");
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
 }
 
 /**
@@ -790,11 +800,19 @@ export function formatMyPages(
     renderHeading(result, crawl, project),
     WHAT_THE_VENDOR_RETURNS,
     renderCriteria(result, input),
+    // A-2 (P1). MEASURED 2026-09-03: two paid calls against two Turkish sites, one with a 5-page
+    // crawl and one with a 100-page crawl, BOTH returned vendor_total_count 1 on the en/2840
+    // default — and the only advice the reply gave was to advance `offset`, which does nothing
+    // when the vendor says the whole set is one row. 2 x 40 credits and no sentence. The sentence
+    // is the SHARED one (format/locale-default.ts); the default itself is not touched here.
+    defaultLocaleWarning(result.target, input),
     renderWindowCaption(result),
     ...(crawl.kind === "crawl" ? [] : vendorWindowList(result.window.rows)),
     renderComparison(result, crawl),
     VENDOR_JUDGEMENT_NOTE,
-  ].join("\n\n");
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
 }
 
 /**
