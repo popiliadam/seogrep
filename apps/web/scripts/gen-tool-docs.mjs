@@ -1141,7 +1141,13 @@ export const DOC_PROSE = {
       "positions and impressions that decision was read from. It is deliberately **omitted** when the " +
       "competing pages are within about half a SERP page of each other, or when a lower-ranking page " +
       "is earning more clicks than the better-ranked one — naming a keeper there would be a guess, and " +
-      "the wrong keeper means consolidating away the page that was working.\n\nEvery reply ends with the same four-line footer the other two " +
+      "the wrong keeper means consolidating away the page that was working.\n\nYour **home page is " +
+      "never the page it tells you to fold**. A home page ranks for many queries at once, so " +
+      "canonicalizing it into one of them trades away every other query it holds — and `rel=canonical` " +
+      "is a strong signal to Google rather than a setting you can cheaply take back. When your home " +
+      "page is one of the competitors it is named and explicitly left out of the decision; when it is " +
+      "the only page behind the leader there is no recommendation at all. It can still be the page you " +
+      "are told to **keep**.\n\nEvery reply ends with the same four-line footer the other two " +
       "discovery tools carry: the window that was analyzed against the one before it, a caveat " +
       "when either window hit the row cap, when the pull was taken plus a sentence once that is " +
       "old, and — when your Search Console credential has stopped working — a warning to " +

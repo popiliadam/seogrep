@@ -29,6 +29,31 @@ export function documentOf(page: string): string {
   return hash === -1 ? page : page.slice(0, hash);
 }
 
+/**
+ * Is this page value the SITE ROOT — the home page rather than a document under it?
+ *
+ * The one URL CLASS the discovery engines have to know about, and the reason is B-1 (measured live
+ * 2026-09-03): the consolidation recommendation named `https://dentnotion.com/` as a page to
+ * canonicalize into a doctor's biography page, and no numeric floor could have caught it because
+ * every floor held. A home page ranks for many queries at once, so folding it into one of them
+ * trades away every other query it holds — and R-3.9 makes `rel=canonical` a STRONG signal, so
+ * following that instruction is not cheaply undone.
+ *
+ * PATH ONLY. A query string does not make a home page a different document class ("/?utm_source=x"
+ * is still the home page), and the scheme and host are the caller's to compare, not this
+ * predicate's. A value that will not parse as an absolute URL is NOT the root: this predicate only
+ * ever WITHHOLDS advice, so an unparseable value falling through to the ordinary path is the safe
+ * direction — it keeps behaving exactly as it did before this rule existed.
+ */
+export function isSiteRoot(page: string): boolean {
+  try {
+    const { pathname } = new URL(documentOf(page));
+    return pathname === "/" || pathname === "";
+  } catch {
+    return false;
+  }
+}
+
 /** Group a window's rows by query (each row is one page for that query), input order kept. */
 export function groupByQuery(rows: readonly GscRow[]): Map<string, GscRow[]> {
   const byQuery = new Map<string, GscRow[]>();

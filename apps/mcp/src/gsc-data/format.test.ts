@@ -361,6 +361,95 @@ describe("cannibalizationAdvice names a keeper only when the data supports one",
     ).toBeNull();
   });
 
+  /**
+   * B-1, MEASURED LIVE 2026-09-03 — the recommendation told a customer to canonicalize their own
+   * HOME PAGE into a doctor's biography page: `Keep …/doctor/dt-gurkan-zeybek-3/ (position 1.9,
+   * 25 clicks); canonicalize or merge …/doktorlarimiz/ (position 8.8), https://dentnotion.com/
+   * (position 10.0) into it`. Both existing floors HELD on that group — the smallest gap was 6.8
+   * and the leader out-earned everyone — so no threshold could have caught it: the missing axis is
+   * the URL's CLASS, not its numbers. R-3.9 makes `rel=canonical` a strong signal, so a customer
+   * who follows that instruction is not cheaply undoing it.
+   *
+   * THE AXIS IS PINNED IN BOTH DIRECTIONS (signed lesson 14). A gate that silenced the whole
+   * recommendation whenever a root URL appeared would pass a "root is never folded" spec while
+   * quietly deleting the tool's main output, so the inner page in the SAME group must still be
+   * named — and a group with no root in it must be untouched.
+   */
+  const HOME = "https://x.test/";
+  const INNER = "https://x.test/doktorlarimiz/";
+
+  it("never names the site root as the folded side, and still folds the inner page beside it", () => {
+    const advice = cannibalizationAdvice(
+      competing([
+        { page: LEADER, position: 1.9, impressions: 275, clicks: 25 },
+        { page: INNER, position: 8.8, impressions: 246, clicks: 0 },
+        { page: HOME, position: 10, impressions: 100, clicks: 0 },
+      ]),
+    );
+    expect(advice).not.toBeNull();
+    expect(advice).toContain(`Keep ${LEADER}`);
+    expect(advice).toContain(`${INNER} (position 8.8)`);
+    expect(advice).not.toContain(`${HOME} (position 10.0)`);
+    // The home page is EXCLUDED OUT LOUD — a silently shorter list would read as if it had never
+    // ranked, and the reader would have no idea a decision was made for them.
+    expect(advice).toContain(HOME);
+    expect(advice).toMatch(/home page/i);
+    // …and the arithmetic follows the shorter list: 246 held, not 346.
+    expect(advice).toContain("246 of this query's 621 impressions");
+  });
+
+  it("stays silent when the site root is the ONLY page behind the leader", () => {
+    expect(
+      cannibalizationAdvice(
+        competing([
+          { page: LEADER, position: 1.9, impressions: 275, clicks: 25 },
+          { page: HOME, position: 10, impressions: 100, clicks: 0 },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  it("still folds an inner page into another inner page — no root, no change", () => {
+    const advice = cannibalizationAdvice(
+      competing([
+        { page: LEADER, position: 1.9, impressions: 275, clicks: 25 },
+        { page: INNER, position: 8.8, impressions: 246, clicks: 0 },
+      ]),
+    );
+    expect(advice).toContain(`${INNER} (position 8.8)`);
+    expect(advice).not.toMatch(/home page/i);
+  });
+
+  it("lets the site root be the KEEPER — protecting it is not refusing to name it", () => {
+    const advice = cannibalizationAdvice(
+      competing([
+        { page: HOME, position: 2, impressions: 900, clicks: 40 },
+        { page: INNER, position: 30, impressions: 300, clicks: 1 },
+      ]),
+    );
+    expect(advice).toContain(`Keep ${HOME}`);
+    expect(advice).toContain(`${INNER} (position 30.0)`);
+  });
+
+  /**
+   * A root with no trailing slash, and a root carrying a query string, are the same document class
+   * as `https://x.test/`. Google emits more than one of these shapes, and a check written against
+   * the literal "ends with a slash" would protect one and fold the others.
+   */
+  it("recognises the root however Google spelled it", () => {
+    for (const root of ["https://x.test", "https://x.test/?utm_source=x", "http://x.test/"]) {
+      const advice = cannibalizationAdvice(
+        competing([
+          { page: LEADER, position: 1.9, impressions: 275, clicks: 25 },
+          { page: INNER, position: 8.8, impressions: 246, clicks: 0 },
+          { page: root, position: 10, impressions: 100, clicks: 0 },
+        ]),
+      );
+      expect(advice, root).not.toContain(`${root} (position 10.0)`);
+      expect(advice, root).toContain(`${INNER} (position 8.8)`);
+    }
+  });
+
   it("emits at exactly the gap and stays silent one step inside it", () => {
     const at = (gap: number) =>
       cannibalizationAdvice(

@@ -1,5 +1,6 @@
 import type { CannibalGroup } from "./cannibalization.ts";
 import type { PageDecay } from "./content-decay.ts";
+import { isSiteRoot } from "./document.ts";
 import { MAX_ROW_LIMIT } from "./pull.ts";
 import type { PullData } from "./types.ts";
 
@@ -125,7 +126,25 @@ export const CANNIBAL_CLEAR_LEADER_GAP = 5;
  *
  * Every number in the sentence is read off the group's own rows — the URLs, both positions, the
  * measured gap, the impressions each side holds. Nothing is projected.
+ *
+ * THE THIRD FLOOR IS A URL CLASS, NOT A NUMBER (B-1, measured live 2026-09-03). On a real group
+ * this line named `https://dentnotion.com/` — the customer's home page — as a page to canonicalize
+ * into a doctor's biography page, and BOTH floors above held while it did: the smallest gap was
+ * 6.8 and the leader out-earned every trailing page. No threshold could have caught it, because
+ * the home page's numbers were not the problem. So it leaves the FOLDED side and is named out
+ * loud instead; being the KEEPER is still allowed, since keeping a home page harms nothing.
  */
+function homePageClause(homes: readonly { readonly page: string }[]): string {
+  if (homes.length === 0) return "";
+  const one = homes.length === 1;
+  return (
+    ` Your home page${one ? "" : "s"} ${homes.map((p) => p.page).join(", ")} ` +
+    `also rank${one ? "s" : ""} for this query and ${one ? "is" : "are"} left out of that ` +
+    "decision: a home page ranks for many queries at once, so folding it into one of them " +
+    "trades away every other query it holds."
+  );
+}
+
 export function cannibalizationAdvice(group: CannibalGroup): string | null {
   const ranked = [...group.pages].sort((a, b) => a.position - b.position);
   const [leader, ...trailing] = ranked;
@@ -135,18 +154,27 @@ export function cannibalizationAdvice(group: CannibalGroup): string | null {
   if (gaps.some((gap) => gap < CANNIBAL_CLEAR_LEADER_GAP)) return null;
   if (trailing.some((p) => p.clicks > leader.clicks)) return null;
 
-  const minGap = Math.min(...gaps);
-  const held = trailing.reduce((sum, p) => sum + p.impressions, 0);
-  const named = trailing.map((p) => `${p.page} (position ${pos(p.position)})`).join(", ");
-  // "84.7 positions behind" for one trailing page and "84.7+" for several: with one the gap IS
+  // The two floors above are judged over EVERY trailing page, home page included: a home page
+  // inside the gap still means this group is not a clean keep-one shape. Only the FOLD LIST is
+  // narrowed — and when nothing survives the narrowing there is no consolidation left to
+  // recommend, which is this function's own rule (null is a real answer) rather than a gap.
+  const homes = trailing.filter((p) => isSiteRoot(p.page));
+  const foldable = trailing.filter((p) => !isSiteRoot(p.page));
+  if (foldable.length === 0) return null;
+
+  const minGap = Math.min(...foldable.map((p) => p.position - leader.position));
+  const held = foldable.reduce((sum, p) => sum + p.impressions, 0);
+  const named = foldable.map((p) => `${p.page} (position ${pos(p.position)})`).join(", ");
+  // "84.7 positions behind" for one folded page and "84.7+" for several: with one the gap IS
   // that number, and a "+" on an exact figure quietly tells the reader the tool is rounding when
   // it is not. With several it is the SMALLEST of their gaps, and the "+" is the honest part.
-  const sit = trailing.length === 1 ? "it sits" : "they sit";
-  const gapText = trailing.length === 1 ? pos(minGap) : `${pos(minGap)}+`;
+  const sit = foldable.length === 1 ? "it sits" : "they sit";
+  const gapText = foldable.length === 1 ? pos(minGap) : `${pos(minGap)}+`;
   return (
     `    → Keep ${leader.page} (position ${pos(leader.position)}, ${grouped(leader.clicks)} clicks); ` +
     `canonicalize or merge ${named} into it — ${sit} ${gapText} positions behind while holding ` +
-    `${grouped(held)} of this query's ${grouped(group.total_impressions)} impressions.`
+    `${grouped(held)} of this query's ${grouped(group.total_impressions)} impressions.` +
+    homePageClause(homes)
   );
 }
 
