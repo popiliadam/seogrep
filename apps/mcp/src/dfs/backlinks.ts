@@ -93,6 +93,19 @@ export interface BacklinkSummary {
   readonly referring_domains_nofollow: number | null;
   readonly referring_main_domains: number | null;
   readonly broken_backlinks: number | null;
+  /**
+   * DataForSEO's `referring_links_attributes`: how many of the target's incoming links carry each
+   * `rel` attribute the vendor saw, KEYED BY THE VENDOR'S OWN SPELLING (its own example returns
+   * {"nofollow": 4120, "noopener": 2210, "sponsored": 88}).
+   *
+   * It is carried as the vendor's map rather than folded into buckets of our own. Google's spam
+   * policies treat `nofollow`, `sponsored` and `ugc` as three DIFFERENT declarations — a paid link
+   * marked `sponsored` and a forum signature marked `ugc` are not the same statement — so a
+   * product that flattened them into one "nofollow" number would be publishing a distinction the
+   * vendor never made (reference R-6.2). `null` is the vendor not sending the field at all, which
+   * is not the same as sending an empty one.
+   */
+  readonly referring_links_attributes: Readonly<Record<string, number>> | null;
 }
 
 /** One referring domain. */
@@ -212,6 +225,9 @@ const summaryResultSchema = z.object({
   referring_domains: z.number().nullish(),
   referring_domains_nofollow: z.number().nullish(),
   referring_main_domains: z.number().nullish(),
+  // A RECORD, because the vendor decides which attributes exist: reading it as a fixed set of
+  // properties would silently drop any `rel` value DataForSEO starts counting later.
+  referring_links_attributes: z.record(z.string(), z.number()).nullish(),
 });
 
 // DFS sends `null` for text fields the fixtures only ever showed as strings, so every text field
@@ -245,6 +261,7 @@ const EMPTY_SUMMARY: BacklinkSummary = {
   referring_domains_nofollow: null,
   referring_main_domains: null,
   broken_backlinks: null,
+  referring_links_attributes: null,
 };
 
 /** Project a /backlinks/summary/live response to {target, summary}. */
@@ -264,6 +281,7 @@ export function parseBacklinksSummaryResponse(
       referring_domains_nofollow: result.referring_domains_nofollow ?? null,
       referring_main_domains: result.referring_main_domains ?? null,
       broken_backlinks: result.broken_backlinks ?? null,
+      referring_links_attributes: result.referring_links_attributes ?? null,
     },
   };
 }

@@ -52,6 +52,7 @@ const FULL_PROFILE: BacklinkProfile = {
     referring_domains_nofollow: 1458,
     referring_main_domains: 11004,
     broken_backlinks: 118,
+    referring_links_attributes: { nofollow: 4120, noopener: 2210, sponsored: 88 },
   },
   top_referring_domains: {
     total_count: 12372,
@@ -71,6 +72,8 @@ describe("formatBacklinkProfile", () => {
     expect(formatBacklinkProfile(FULL_PROFILE)).toBe(
       'Backlink profile for "example.com":\n' +
         "• Backlinks: 41,245\n" +
+        "• Link attributes (DataForSEO referring_links_attributes): nofollow 4,120 · " +
+        "noopener 2,210 · sponsored 88\n" +
         "• Referring domains: 12,372 — 10,914 dofollow-only (88%)\n" +
         "• Referring main domains: 11,004\n" +
         "• Broken backlinks: 118\n" +
@@ -121,6 +124,54 @@ describe("formatBacklinkProfile", () => {
     expect(text).not.toContain(" of 12,372");
   });
 
+  /**
+   * R-6.2 (finding AB-2). The paid /backlinks/summary/live body carries a per-attribute breakdown
+   * — the vendor's own example counts 88 `sponsored` links — and the report printed none of it:
+   * `nofollow`, `sponsored` and `ugc` are three DIFFERENT declarations to Google, and the reply
+   * did not even carry the raw nofollow COUNT, only a percentage derived from it.
+   */
+  it("prints the vendor's rel-attribute buckets separately, under the vendor's own key names", () => {
+    const text = formatBacklinkProfile(FULL_PROFILE);
+    expect(text).toContain("referring_links_attributes");
+    expect(text).toContain("nofollow 4,120");
+    expect(text).toContain("sponsored 88");
+    // Not summed, not bucketed: three vendor keys, three numbers.
+    expect(text).toContain("noopener 2,210");
+  });
+
+  it("keeps the vendor's own key ORDER instead of sorting the buckets", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      summary: {
+        ...FULL_PROFILE.summary,
+        referring_links_attributes: { ugc: 3, nofollow: 2, sponsored: 1 },
+      },
+    });
+    expect(text).toContain("ugc 3 · nofollow 2 · sponsored 1");
+  });
+
+  /** A silence is said in WORDS. An absent breakdown must never render as "0 sponsored". */
+  it("says the vendor did not report the attributes rather than printing zeroes", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      summary: { ...FULL_PROFILE.summary, referring_links_attributes: null },
+    });
+    expect(text).toContain(
+      "• Link attributes (DataForSEO referring_links_attributes): not reported in this response",
+    );
+    expect(text).not.toContain("sponsored 0");
+  });
+
+  /** An EMPTY map is the vendor answering, not the vendor staying silent — a different sentence. */
+  it("distinguishes an empty vendor breakdown from an absent one", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      summary: { ...FULL_PROFILE.summary, referring_links_attributes: {} },
+    });
+    expect(text).toContain("reported with no attribute counted");
+    expect(text).not.toContain("not reported in this response");
+  });
+
   it("renders n/a for every missing metric rather than inventing a number", () => {
     const text = formatBacklinkProfile({
       target: "quiet.example",
@@ -132,6 +183,7 @@ describe("formatBacklinkProfile", () => {
         referring_domains_nofollow: null,
         referring_main_domains: null,
         broken_backlinks: null,
+        referring_links_attributes: null,
       },
       top_referring_domains: {
         total_count: null,

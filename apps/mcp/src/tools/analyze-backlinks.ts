@@ -129,11 +129,43 @@ function listHeader(label: string, list: BacklinkList<unknown>): string {
   return truncated ? `${label} (${shown} of ${thousands(list.total_count ?? 0)}):` : `${label} (${shown}):`;
 }
 
+/**
+ * THE VENDOR'S rel-ATTRIBUTE BREAKDOWN — finding AB-2 / reference R-6.2 (2026-09-04).
+ *
+ * Google's spam policies name three DIFFERENT declarations a link can carry: `nofollow`,
+ * `sponsored` (a paid or advertising link) and `ugc` (user-generated content). They are not
+ * interchangeable, and the difference is exactly what a reader looking at a backlink profile is
+ * trying to see: 88 links declared `sponsored` is a different picture from 88 links a site simply
+ * nofollowed.
+ *
+ * The paid /backlinks/summary/live body has always carried that breakdown in
+ * `referring_links_attributes`, and this report threw it away — it printed no `sponsored` count,
+ * no `ugc` count and not even the raw `nofollow` count, only the percentage derived from the
+ * separate `referring_domains_nofollow` field.
+ *
+ * WHAT IS PRINTED AND WHAT IS NOT. Every key the vendor sent, in the vendor's own spelling and in
+ * the vendor's own order, with its own number: no bucketing, no total, no verdict, and nothing
+ * added for an attribute DataForSEO did not mention. SeoGrep does not say whether a `sponsored`
+ * link is a problem — R-6.2 is Google's rule and the counts are DataForSEO's.
+ *
+ * THREE STATES, THREE SENTENCES. A missing field is the vendor saying nothing; an empty map is
+ * the vendor answering with no attribute counted; a populated map is the answer itself. Rendering
+ * the first two as "sponsored 0" would publish a measurement nobody made (signed lesson 12).
+ */
+function renderLinkAttributes(attributes: Readonly<Record<string, number>> | null): string {
+  if (attributes === null) return "not reported in this response";
+  const buckets = Object.entries(attributes);
+  if (buckets.length === 0) return "reported with no attribute counted";
+  return buckets.map(([name, count]) => `${name} ${metric(count)}`).join(" · ");
+}
+
 function renderSummary(profile: BacklinkProfile, project: ProjectRef | null | undefined): string {
   const { summary } = profile;
   return [
     `Backlink profile for ${subjectLabel(profile.target, project)}:`,
     `• Backlinks: ${metric(summary.backlinks)}`,
+    `• Link attributes (DataForSEO referring_links_attributes): ` +
+      renderLinkAttributes(summary.referring_links_attributes),
     `• Referring domains: ${renderReferringDomainsMetric(summary)}`,
     `• Referring main domains: ${metric(summary.referring_main_domains)}`,
     `• Broken backlinks: ${metric(summary.broken_backlinks)}`,
