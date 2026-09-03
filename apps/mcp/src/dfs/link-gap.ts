@@ -124,6 +124,21 @@ export interface LinkGapRow {
   readonly backlinks: number | null;
   /** "indicates the number of pages pointing to the target". */
   readonly referring_pages: number | null;
+  /**
+   * The vendor's `referring_pages_nofollow`, carried under its own name. It arrives in the SAME
+   * paid /backlinks/domain_intersection response as the count above and was being dropped
+   * (finding LG B-1) — which left an "outreach shortlist" unable to separate a domain that links
+   * with followed links from one whose counted pages all carry a nofollow. Google's spam policies
+   * treat a nofollowed link as one it is asked not to count (reference R-6.2).
+   *
+   * NOT derived from, and never subtracted from, `referring_pages`: the sibling analyze_backlinks
+   * documents the vendor's `*_nofollow` counters as "carries AT LEAST ONE nofollow link", so the
+   * difference between the two is not "the followed pages". The renderer prints both numbers and
+   * derives nothing.
+   */
+  readonly referring_pages_nofollow: number | null;
+  /** The vendor's `referring_domains_nofollow` for this entry, under its own name. Same rule. */
+  readonly referring_domains_nofollow: number | null;
   /** "average spam score of the backlinks pointing to the target". */
   readonly backlinks_spam_score: number | null;
   /**
@@ -204,6 +219,8 @@ const intersectionEntrySchema = z.object({
   rank: z.number().nullish(),
   backlinks: z.number().nullish(),
   referring_pages: z.number().nullish(),
+  referring_pages_nofollow: z.number().nullish(),
+  referring_domains_nofollow: z.number().nullish(),
   backlinks_spam_score: z.number().nullish(),
   first_seen: z.string().nullish(),
 });
@@ -255,6 +272,8 @@ export function parseLinkGapResponse(raw: unknown): {
           rank: entry.rank ?? null,
           backlinks: entry.backlinks ?? null,
           referring_pages: entry.referring_pages ?? null,
+          referring_pages_nofollow: entry.referring_pages_nofollow ?? null,
+          referring_domains_nofollow: entry.referring_domains_nofollow ?? null,
           backlinks_spam_score: entry.backlinks_spam_score ?? null,
           first_seen: entry.first_seen ?? null,
         },

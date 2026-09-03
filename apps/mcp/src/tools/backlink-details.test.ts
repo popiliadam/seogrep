@@ -11,7 +11,9 @@ import {
   type TargetPageRow,
   type VendorWindow,
 } from "../dfs/backlink-details.ts";
+import { REL_ATTRIBUTES_NOTE } from "../format/rel-attributes.ts";
 import {
+  EMPTY_LINK_WINDOW_NOTE,
   MAX_RENDERED_OUTPUT_CHARS,
   VENDOR_SPAM_SCORE_NOTE,
   formatBacklinkDetails,
@@ -48,6 +50,7 @@ const LINK: BacklinkDetailRow = {
   anchor: "Forbes",
   item_type: "anchor",
   dofollow: true,
+  attributes: null,
   rank: 862,
   backlink_spam_score: 0,
   first_seen: "2019-01-15 22:56:46 +00:00",
@@ -291,6 +294,50 @@ describe("formatBacklinkDetails", () => {
     expect(text).not.toContain('anchor ""');
   });
 
+  /**
+   * R-6.2 (finding BD-3). The vendor sends the `rel` values it saw per link; the row printed only
+   * `dofollow` / `nofollow`, so a PAID link declared `sponsored` and a plain nofollowed link were
+   * the same word — in the tool whose one job is showing links individually.
+   */
+  it("prints the vendor's rel attributes beside the follow status, under the vendor's field name", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_([{ ...LINK, dofollow: false, attributes: ["sponsored", "noopener"] }], 10),
+        window_([], null),
+      ),
+    );
+    expect(text).toContain("nofollow · DataForSEO attributes: sponsored, noopener");
+    expect(text).toContain(REL_ATTRIBUTES_NOTE);
+  });
+
+  it("distinguishes a sponsored link from a ugc link rather than calling both nofollow", () => {
+    const text = formatBacklinkDetails(
+      details(
+        window_(
+          [
+            { ...LINK, domain_from: "paid.example", dofollow: false, attributes: ["sponsored"] },
+            { ...LINK, domain_from: "forum.example", dofollow: false, attributes: ["ugc"] },
+          ],
+          10,
+        ),
+        window_([], null),
+      ),
+    );
+    expect(text).toContain("DataForSEO attributes: sponsored");
+    expect(text).toContain("DataForSEO attributes: ugc");
+  });
+
+  /** A vendor silence renders EXACTLY as it did before the field was parsed — no invented "none". */
+  it("adds no attribute clause, and no note, when the vendor reported nothing", () => {
+    const text = formatBacklinkDetails(details(window_([LINK], 10), window_([], null)));
+    expect(text).not.toContain("DataForSEO attributes");
+    expect(text).not.toContain(REL_ATTRIBUTES_NOTE);
+    const empty = formatBacklinkDetails(
+      details(window_([{ ...LINK, attributes: [] }], 10), window_([], null)),
+    );
+    expect(empty).not.toContain("DataForSEO attributes");
+  });
+
   it("says out loud when DataForSEO named no URL, instead of leaving a gap", () => {
     const text = formatBacklinkDetails(
       details(window_([{ ...LINK, url_to: null, url_from: null }], 10), window_([], null)),
@@ -309,14 +356,39 @@ describe("formatBacklinkDetails", () => {
     expect(formatBacklinkDetails(ONE_OF_EACH)).not.toContain("flags this link as broken");
   });
 
-  it("prints only the list that came back, when one of the two is empty", () => {
+  /**
+   * CONTRACT CHANGED 2026-09-04 (finding BD-1). The old pin asserted the LINK half went SILENT
+   * when its window came back empty, and that silence was the defect: the page window is always
+   * fetched from offset 0, so on a real domain it is never empty — which made the honest
+   * "nothing came back" answer unreachable in production while its test stayed green on a
+   * hand-built double (signed lesson 12). A paid call at offset 19,000 returned 1,164 characters
+   * that never contained the word "backlinks" or the offset it was empty for.
+   *
+   * What is UNCHANGED and still pinned below: the empty PAGE half stays silent, and the caption
+   * for a list that did come back is untouched.
+   */
+  it("still prints only the page list when the LINK list is the one that came back", () => {
     const linksOnly = formatBacklinkDetails(details(window_([LINK], 10), window_([], null)));
     expect(linksOnly).toContain("Individual backlinks —");
     expect(linksOnly).not.toContain("Pages of this site that earn the links");
+  });
 
-    const pagesOnly = formatBacklinkDetails(details(window_([], null), window_([PAGE], 10)));
+  it("names the empty LINK window instead of going silent about the half that was paid for", () => {
+    const pagesOnly = formatBacklinkDetails(
+      details(window_([], 42_671_699, { offset: 19_000, limit: 5 }), window_([PAGE], 10)),
+    );
     expect(pagesOnly).toContain("Pages of this site that earn the links");
-    expect(pagesOnly).not.toContain("Individual backlinks —");
+    // The window's OWN bounds, through the one caption formatter — offset included.
+    expect(pagesOnly).toContain("Individual backlinks — 0 backlinks in this window");
+    expect(pagesOnly).toContain("(offset 19,000, limit 5)");
+    expect(pagesOnly).toContain(EMPTY_LINK_WINDOW_NOTE);
+    // It is NOT the "nothing at all" answer: rows came back, so that sentence stays for the case
+    // where BOTH windows are empty.
+    expect(pagesOnly).not.toContain("No backlinks found for");
+  });
+
+  it("does not print the empty-window note when link rows came back", () => {
+    expect(formatBacklinkDetails(ONE_OF_EACH)).not.toContain(EMPTY_LINK_WINDOW_NOTE);
   });
 
   /**

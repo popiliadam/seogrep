@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AuthContext } from "../auth.ts";
 import { createMockLinkGapPort, disabledLinkGapPort } from "../dfs/link-gap.ts";
 import type { LinkGapResult, LinkGapRow } from "../dfs/link-gap.ts";
-import { SELF_COMPETITOR_MESSAGE, formatLinkGap, makeLinkGapTool } from "./link-gap.ts";
+import {
+  LINK_GAP_NOFOLLOW_MARKER,
+  SELF_COMPETITOR_MESSAGE,
+  formatLinkGap,
+  makeLinkGapTool,
+} from "./link-gap.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import linkGapFixture from "../dfs/fixtures/backlinks-domain-intersection.json";
@@ -29,6 +34,8 @@ const FULL_ROW: LinkGapRow = {
   rank: 612,
   backlinks: 41,
   referring_pages: 27,
+  referring_pages_nofollow: 2,
+  referring_domains_nofollow: 0,
   backlinks_spam_score: 4,
   first_seen: "2023-04-11 08:22:17 +00:00",
 };
@@ -38,6 +45,8 @@ const BARE_ROW: LinkGapRow = {
   rank: null,
   backlinks: null,
   referring_pages: null,
+  referring_pages_nofollow: null,
+  referring_domains_nofollow: null,
   backlinks_spam_score: null,
   first_seen: null,
 };
@@ -55,6 +64,46 @@ describe("formatLinkGap", () => {
     expect(text).toContain("from 27 of its pages");
     expect(text).toContain("spam score 4");
     expect(text).toContain("first backlink seen 2023-04-11 08:22:17 +00:00");
+  });
+
+  /**
+   * R-6.2 (finding LG B-1). This list is sold as "the outreach shortlist", so a domain whose every
+   * counted page carries a nofollow is a different prospect from one that links with followed
+   * links — and the two counters that say which arrive in the SAME paid response.
+   */
+  it("prints the vendor's nofollow counters beside the counts they qualify", () => {
+    const text = formatLinkGap(gap([FULL_ROW], 612));
+    expect(text).toContain("referring_pages_nofollow 2");
+    expect(text).toContain("referring_domains_nofollow 0");
+  });
+
+  it("marks a domain whose counted pages ALL carry nofollow, without moving it in the list", () => {
+    const allNofollow = { ...FULL_ROW, referring_pages: 27, referring_pages_nofollow: 27 };
+    const text = formatLinkGap(gap([allNofollow, { ...FULL_ROW, domain: "b.test" }], 612));
+    expect(text).toContain(LINK_GAP_NOFOLLOW_MARKER);
+    // The order is DataForSEO's and this finding does not touch it: the marked row stays first.
+    expect(text.indexOf("searchengineweekly.test")).toBeLessThan(text.indexOf("b.test"));
+    expect(text.indexOf(LINK_GAP_NOFOLLOW_MARKER)).toBeLessThan(text.indexOf("b.test"));
+  });
+
+  it("does not mark a domain that has even one page free of the vendor's nofollow count", () => {
+    expect(formatLinkGap(gap([FULL_ROW], 612))).not.toContain(LINK_GAP_NOFOLLOW_MARKER);
+  });
+
+  /** A vendor silence adds no clause at all — a missing counter is never read as 0 nofollow. */
+  it("leaves the row untouched when the vendor sent no nofollow counter", () => {
+    const text = formatLinkGap(gap([BARE_ROW], 1));
+    expect(text).not.toContain("referring_pages_nofollow");
+    expect(text).not.toContain("referring_domains_nofollow");
+    expect(text).not.toContain(LINK_GAP_NOFOLLOW_MARKER);
+  });
+
+  /** Zero pages is not "all of its pages are nofollow": the marker needs something counted. */
+  it("does not mark a domain the vendor counted zero pages for", () => {
+    const text = formatLinkGap(
+      gap([{ ...FULL_ROW, referring_pages: 0, referring_pages_nofollow: 0 }], 1),
+    );
+    expect(text).not.toContain(LINK_GAP_NOFOLLOW_MARKER);
   });
 
   it("says how many of the total are shown when the list is truncated", () => {

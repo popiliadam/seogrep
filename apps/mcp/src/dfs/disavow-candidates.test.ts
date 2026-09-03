@@ -526,6 +526,10 @@ describe("buildCandidateSet", () => {
       spam_score: 84,
       window_link_count: 2,
       window_dofollow_link_count: 1,
+      // R-6.2 (finding DC B-6): the vendor's rel values across THIS window. The fixture's rows
+      // carry none, and a silence stays an empty list rather than a manufactured "no rel".
+      window_link_attributes: [],
+      window_qualified_link_count: 0,
       window_max_backlink_spam_score: 71,
       window_example_url_from: "https://SpamFarm.example/links/1",
       window_example_url_to: "https://example.com/pricing",
@@ -577,6 +581,50 @@ describe("buildCandidateSet", () => {
     );
     expect(set.rows[0]?.window_link_count).toBe(3);
     expect(set.rows[0]?.window_dofollow_link_count).toBe(1);
+  });
+
+  /**
+   * R-6.2 (finding DC B-6). This is the row where a domain's name is put into a disavow file, so
+   * "every link the vendor showed from this domain is one Google already reads as not counting"
+   * is load-bearing: a `domain:` entry for it may accomplish nothing at all.
+   */
+  it("gathers the vendor's rel attributes across the window, distinct and in arrival order", () => {
+    const set = buildCandidateSet(
+      parseBacklinkRowsResponse(
+        envelope({
+          items: [
+            { domain_from: "a.example", dofollow: false, attributes: ["sponsored", "noopener"] },
+            { domain_from: "a.example", dofollow: false, attributes: ["ugc", "sponsored"] },
+            { domain_from: "a.example", dofollow: false },
+          ],
+        }),
+        BOUNDS,
+      ),
+      new Map(),
+      MAX_CANDIDATE_DOMAINS,
+    );
+    expect(set.rows[0]?.window_link_attributes).toEqual(["sponsored", "noopener", "ugc"]);
+    // The third row carried no list at all, so it is NOT counted as qualified.
+    expect(set.rows[0]?.window_qualified_link_count).toBe(2);
+    expect(set.rows[0]?.window_link_count).toBe(3);
+  });
+
+  it("counts a link as qualified only for the three values R-6.2 names", () => {
+    const set = buildCandidateSet(
+      parseBacklinkRowsResponse(
+        envelope({
+          items: [
+            { domain_from: "a.example", attributes: ["noopener"] },
+            { domain_from: "a.example", attributes: ["ugc"] },
+          ],
+        }),
+        BOUNDS,
+      ),
+      new Map(),
+      MAX_CANDIDATE_DOMAINS,
+    );
+    expect(set.rows[0]?.window_qualified_link_count).toBe(1);
+    expect(set.rows[0]?.window_link_attributes).toEqual(["noopener", "ugc"]);
   });
 
   it("lists each distinct linking domain exactly once, keeping the vendor's own spelling", () => {

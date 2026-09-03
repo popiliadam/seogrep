@@ -64,8 +64,30 @@ describe("parseBacklinksSummaryResponse", () => {
         referring_domains_nofollow: 1458,
         referring_main_domains: 11004,
         broken_backlinks: 118,
+        // R-6.2: the vendor's OWN per-attribute breakdown, carried as it arrived. It was being
+        // dropped by this projection until 2026-09-04 (finding AB-2), so a paid response that
+        // counted 88 `sponsored` links reached the customer as nothing at all.
+        referring_links_attributes: { nofollow: 4120, noopener: 2210, sponsored: 88 },
       },
     });
+  });
+
+  it("keeps the vendor's attribute KEYS as they arrived, without renaming or bucketing them", () => {
+    const parsed = parseBacklinksSummaryResponse(summaryFixture);
+    expect(Object.keys(parsed.summary.referring_links_attributes ?? {})).toEqual([
+      "nofollow",
+      "noopener",
+      "sponsored",
+    ]);
+  });
+
+  /** A vendor silence stays a silence: null, never an empty object read later as "none". */
+  it("renders a missing referring_links_attributes as null rather than an empty breakdown", () => {
+    const parsed = parseBacklinksSummaryResponse({
+      status_code: 20000,
+      tasks: [{ status_code: 20000, result: [{ target: "quiet.example", backlinks: 3 }] }],
+    });
+    expect(parsed.summary.referring_links_attributes).toBeNull();
   });
 
   it("falls back to the requested target and all-null metrics when the result is empty", () => {
