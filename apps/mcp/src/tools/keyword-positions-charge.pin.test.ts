@@ -92,6 +92,11 @@ const READING: StoredMeasurement = {
   vendorReportedTimeField: "datetime",
   vendorReportedTimeValue: "2026-08-20 04:00:00 +00:00",
   fetchedAt: "2026-08-20T04:00:00.000Z",
+  // WRITTEN OUT rather than left off. `tsc --noEmit` excludes `src/**/*.test.ts`, so no compile
+  // gate looks at a double's shape here: a field omitted from a `StoredMeasurement` literal is
+  // caught by nothing until the renderer reads it at run time. `null` is the real "not recorded"
+  // value the reader produces for a row whose `report` jsonb it could not parse.
+  report: null,
 };
 
 /**

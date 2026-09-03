@@ -3636,6 +3636,23 @@ export const DOC_PROSE = {
           "DataForSEO had reported one.",
       },
       {
+        heading: "Which page ranked, and what else was on the SERP",
+        body:
+          "A rank is `#4` of something, so each reading also names the **URL that ranked** and " +
+          "the **SERP features DataForSEO recorded on that page** — a featured snippet, a " +
+          "\"people also ask\" block, an AI Overview — under the vendor's own identifiers. Both " +
+          "were captured by [`serp_snapshot`](/docs/tools-reference/serp-snapshot) when the " +
+          "reading was taken; nothing here contacts a search engine to get them.\n\n" +
+          "Readings taken before this was recorded say **not recorded** rather than reporting an " +
+          "absence. \"We did not write it down\" and \"there was nothing there\" are different " +
+          "claims, and this page never prints the first as the second.\n\n" +
+          "**An AI Overview here means one thing only** — the block was on that results page for " +
+          "that keyword when the snapshot was taken. It does **not** say whether your site is " +
+          "cited inside it: Google builds its AI features by *query fan-out*, running further " +
+          "searches across sub-topics and drawing on a wider set of pages than the one keyword " +
+          "measured, so a single reading is not a measure of AI visibility.",
+      },
+      {
         heading: "If nothing has been measured yet",
         body:
           "The tool says so and **charges nothing** — that refusal is returned before any " +
