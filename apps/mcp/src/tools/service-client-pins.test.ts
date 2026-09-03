@@ -60,6 +60,7 @@ import {
   untrackKeywords,
 } from "./tracked-keywords-store.ts";
 import { findPriorAuditRun } from "../audit/runs.ts";
+import { CRAWL_PAGE_READ_CAP, loadCrawlSide } from "./my-pages-crawl.ts";
 import { archiveOwnProject } from "./untrack-project.ts";
 import { defaultLoadAccountToken, defaultLoadConnection } from "./pull-gsc-data.ts";
 import { loadGscTokenStatus } from "../gsc-data/load.ts";
@@ -854,5 +855,80 @@ describe("findPriorAuditRun degrades to silence, never to a refusal", () => {
     // A service client with no `.from` — exactly what a spec that fakes only `rpc` hands over.
     db = { ...createFakeQueryDb(), client: {} as unknown as FakeQueryDb["client"] };
     await expect(quietly()).resolves.toBeNull();
+  });
+});
+
+/**
+ * MY_PAGES A-1 — THE CRAWL SIDE, WHICH IS THE HALF THE TENANT ALREADY PAID FOR.
+ *
+ * Measured 2026-09-03 by the Dilim 4 measurement worker and RE-MEASURED by its referee: deleting
+ * `.eq("user_id", userId)` from the `crawl_pages` read in `my-pages-crawl.ts` left the whole fast
+ * lane green at 4016/4016. The only thing looking at it was `my-pages.db.test.ts`, and `make
+ * verify` does not run that lane (CLAUDE.md command table: "DB şeritleri YOK"). This is the THIRD
+ * appearance of the class — Dilim 3 opened it, the 2026-09 audit slice above closed two more —
+ * and it is here for the reason this file opens with: `my_pages` injects `loadCrawl` as a port,
+ * so every tool-level spec drives a fake and the production query never runs at all.
+ *
+ * BOTH statements one `loadCrawlSide` call opens, not just the one the finding named (signed
+ * lesson 14, the POSITION axis — the second read was pinned by nothing either):
+ *   · the `jobs` read, through `getLatestSucceededCrawl` -> `getLatestSucceededResult`. It is the
+ *     shared port `whats_next` and the audits read their crawl through, so its tenant filter is
+ *     four tools' guard and not this one's. Unscoped, "your latest crawl" becomes the FLEET's
+ *     latest crawl of that project id, and the job id it returns then keys the read below.
+ *   · the `crawl_pages` read itself. Its own header calls the `user_id` filter defence in depth
+ *     because the job id arrived tenant-scoped — which is an argument for why the read is safe
+ *     TODAY, never an argument for deleting the filter, and NEVER #4 is a rule about every query.
+ *
+ * THE WHOLE KEY, not the tenant column alone (this file's rule). `kind = "page"` is load-bearing
+ * in the same way a tenant filter is: 0023 stores the crawl's SKIPPED urls in the same table, so
+ * a read that lost it would count pages nobody fetched as pages we crawled — the tool's central
+ * claim, inverted. And the rows are never the evidence: the fake applies none of these filters.
+ */
+describe("the my_pages crawl-side reads carry their whole key (A-1)", () => {
+  const PROJECT = "aa11bb22-cc33-4d44-8e55-ff6677889900";
+  const CRAWL_JOB = "1f2e3d4c-5b6a-4798-8071-a2b3c4d5e6f7";
+
+  /** A `jobs` answer that resolves, so the second statement is actually opened. */
+  function withOneCrawl(): void {
+    db = createFakeQueryDb((statement) =>
+      statement.table === "jobs"
+        ? { data: { id: CRAWL_JOB, result: {}, created_at: "2026-09-03T10:00:00.000Z" } }
+        : { data: [{ url: "https://example.com/a", status: 200 }] },
+    );
+  }
+
+  it("the latest-crawl lookup is scoped to this tenant and this project", async () => {
+    withOneCrawl();
+    await loadCrawlSide(USER, PROJECT);
+    const jobs = db.onlyStatementFor("jobs");
+    expect(jobs.calls).toContainEqual(tenantFilter);
+    expect(jobs.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+    // Beside the guards: this is the CRAWL port, so a pull_gsc_data run or a still-running crawl
+    // must not be handed back as "the crawl we compared against".
+    expect(jobs.calls).toContainEqual({ method: "eq", args: ["tool", "crawl_site"] });
+    expect(jobs.calls).toContainEqual({ method: "eq", args: ["status", "succeeded"] });
+  });
+
+  it("the crawl_pages read carries user_id, project_id, job_id AND kind", async () => {
+    withOneCrawl();
+    await loadCrawlSide(USER, PROJECT);
+    const pages = db.onlyStatementFor("crawl_pages");
+    expect(pages.calls).toContainEqual(tenantFilter);
+    expect(pages.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+    expect(pages.calls).toContainEqual({ method: "eq", args: ["job_id", CRAWL_JOB] });
+    expect(pages.calls).toContainEqual({ method: "eq", args: ["kind", "page"] });
+  });
+
+  /**
+   * The bound is pinned beside the filters because `truncated` — the sentence the output prints
+   * about a crawl it could only partly compare — is derived from the read having FILLED the cap.
+   * A read with no `limit` fills PostgREST's own 1000-row page instead, which would make the flag
+   * a statement about the server's default rather than about ours.
+   */
+  it("bounds the read at the cap the truncation notice is derived from", async () => {
+    withOneCrawl();
+    await loadCrawlSide(USER, PROJECT);
+    const pages = db.onlyStatementFor("crawl_pages");
+    expect(callsTo(pages, "limit").map((call) => call.args)).toEqual([[CRAWL_PAGE_READ_CAP]]);
   });
 });
