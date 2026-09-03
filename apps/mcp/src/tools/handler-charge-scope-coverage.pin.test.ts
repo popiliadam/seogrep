@@ -112,10 +112,9 @@ describe("every charge:\"handler\" tool accounts for its ledger project scope (H
     const missing = SELF_SETTLING.filter(
       (tool) => !(tool in NO_SUBJECT_TO_SCOPE) && !namesProjectScope(tool),
     );
-    // keyword_positions is the ONE call site this slice did not own (its own fix slice does), and
-    // this assertion is written so it CANNOT rot: the day that slice lands, `missing` empties and
-    // this spec goes RED, which is what forces the line below to be deleted rather than believed.
-    expect(missing).toEqual(["keyword_positions"]);
+    // keyword_positions landed in fix/positions-d3 (merged after fix/ledger-scope-d3), so the
+    // roster is complete: every charge:"handler" tool with a subject scopes its ledger row.
+    expect(missing).toEqual([]);
   });
 
   it("leaves the exempt tools genuinely without one, rather than quietly scoped", () => {
