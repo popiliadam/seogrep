@@ -32,6 +32,7 @@ import {
   SEARCH_VOLUME_NOTE,
 } from "../format/search-volume.ts";
 import { MODEL_PRECISION_CLAUSE } from "../format/quantities.ts";
+import { twoLetterTld } from "../format/locale-default.ts";
 import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
@@ -515,49 +516,16 @@ export function formatRankedKeywords(
 }
 
 /**
- * Two-letter TLDs that IANA delegated to a country but whose registries sell them worldwide with
- * no local-presence requirement, and whose registrants are overwhelmingly not in that country.
+ * The country-code-TLD test now lives in format/locale-default.ts, together with the exclusion
+ * list and the "never guess a location_code" rule this tool wrote first.
  *
- * They break the two-letter test in the direction that MATTERS. Telling the owner of a `.io` SaaS
- * that their domain is "a two-letter country-code TLD" and that they should pass the location
- * code for "that country" is advice about the British Indian Ocean Territory — a wrong claim
- * stated in the confident voice the rest of the hint earns, and stated exactly when the result
- * was thin and the reader is most inclined to act on it.
- *
- * The list is short and deliberately errs toward EXCLUDING: a genuinely Colombian `.co` site
- * loses the TLD sentence but still gets the generic locale hint below, which is the whole
- * actionable half. Dropping a true clue costs a sentence; keeping a false one costs the reader
- * a 65-credit lookup pointed at the wrong country.
+ * IT MOVED RATHER THAN BEING COPIED (finding H-3). Until 2026-09-03 this file held the ONLY copy
+ * in the tree, and three sibling tools ran the same paid lookup on the same en/2840 default with
+ * no sentence at all — one of them measured costing 2 x 40 credits (my_pages, A-2). Four tools
+ * telling one domain owner four different things about one mistake is the failure mode; the
+ * helper is therefore shared and this tool's own TRIGGER (a thin result) stays here, because it
+ * is a different question from "is this a ccTLD" and its specs pin the answer.
  */
-const GENERIC_TWO_LETTER_TLDS: ReadonlySet<string> = new Set([
-  "io",
-  "ai",
-  "co",
-  "me",
-  "tv",
-  "cc",
-  "fm",
-  "gg",
-  "ly",
-  "sh",
-  "to",
-]);
-
-/**
- * The domain's TLD when it is two letters AND is not one of the generically-marketed ones above,
- * otherwise null.
- *
- * Two letters is otherwise the whole test, and it is the whole claim the hint makes: IANA
- * delegates country-code TLDs as two-letter labels. What this deliberately does NOT do is map
- * that label to a DataForSEO location_code. Exactly two codes have been measured here (US 2840,
- * TR 2792) — that is a pair of data points, not a table — and a guessed code does not fail
- * loudly: it returns another country's rankings, which read as perfectly ordinary data.
- */
-function twoLetterTld(domain: string): string | null {
-  const tld = domain.slice(domain.lastIndexOf(".") + 1).toLowerCase();
-  if (!/^[a-z]{2}$/.test(tld)) return null;
-  return GENERIC_TWO_LETTER_TLDS.has(tld) ? null : tld;
-}
 
 /**
  * The locale caveat, appended ONLY when the result is thin AND the caller never chose a locale.
