@@ -1773,6 +1773,24 @@ describe("discover_keywords — the default-locale warning on for_site (H-3)", (
     expect(text).not.toMatch(/country-code TLD/);
   });
 
+  /**
+   * THE EMPTY ANSWER, which is the one the warning exists for: a for_site lookup that came back
+   * with nothing on the US default reads as "DataForSEO knows no keywords for this domain". This
+   * path renders through `renderNoKeywords`, a DIFFERENT block list from the populated one — and
+   * it was unpinned: deleting the warning from that branch left all 124 specs green (referee,
+   * 2026-09-03), which is the "green for the wrong reason" shape lesson 12 names.
+   */
+  it("warns on the for_site answer that returned no keyword at all", () => {
+    const empty = forSite("adstark.com.tr");
+    const text = formatDiscoverKeywords(
+      { ...empty, window: { ...empty.window, window_row_count: 0, rows: [] } },
+      LOCALE,
+    );
+    expect(text).toMatch(/no keywords for/i);
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", LOCALE));
+    expect(text).toMatch(/country-code TLD/);
+  });
+
   it("says nothing on the seed-driven modes, which have no domain to argue from", () => {
     for (const mode of ["ideas", "suggestions", "related"] as const) {
       expect(formatDiscoverKeywords(resultWith(mode, [FULL_ROW]), LOCALE)).not.toMatch(
