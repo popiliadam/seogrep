@@ -291,10 +291,47 @@ describe("formatBacklinkChanges — the unfinished last bucket (B-4)", () => {
     expect(withoutPartial).not.toContain(PARTIAL_BUCKET_MARKER);
   });
 
-  it("says nothing about a bucket dated today or earlier — only a FUTURE label is provable", () => {
+  /**
+   * THE BOUNDARY, and the first pass had it backwards. It pinned "a bucket dated today says
+   * nothing", reasoning that such a bucket is only unfinished until midnight. That reads the
+   * label as a point in time; it is not. DataForSEO labels a bucket with the END of the period
+   * it covers, so a bucket labelled TODAY covers a period that ends today — and at the moment
+   * the call is answered, today is not over. The comparison is `>=`, and these are its specs.
+   */
+  it("marks a bucket dated TODAY — its period ends today, so it has not ended yet", () => {
     const todayBucket: BacklinkChangePoint = { ...CHANGE, date: "2026-09-03 00:00:00 +00:00" };
     const text = formatBacklinkChanges(history([todayBucket], []), null, TODAY);
+    expect(text).toContain(PARTIAL_BUCKET_MARKER);
+    expect(text).toContain(PARTIAL_BUCKET_NOTE);
+  });
+
+  it("says nothing about a bucket whose period closed BEFORE today", () => {
+    const text = formatBacklinkChanges(history([finished], [finishedProfile]), null, TODAY);
     expect(text).not.toContain(PARTIAL_BUCKET_MARKER);
+  });
+
+  /**
+   * `day` grouping is where this stops being an edge case: the last bucket of a daily series is
+   * labelled today on EVERY call, so under the old `>` boundary the freshest line in the series
+   * — the one a reader looks at first — was the one most likely to be misread as "0 today".
+   */
+  it("marks the last bucket of a DAILY series, which is always labelled today", () => {
+    const yesterday: BacklinkChangePoint = { ...CHANGE, date: "2026-09-02 00:00:00 +00:00" };
+    const today: BacklinkChangePoint = {
+      ...CHANGE,
+      date: "2026-09-03 00:00:00 +00:00",
+      new_backlinks: 0,
+      lost_backlinks: 0,
+    };
+    const text = formatBacklinkChanges(
+      { ...history([yesterday, today], []), group_range: "day" },
+      null,
+      TODAY,
+    );
+    const lines = text.split("\n").filter((line) => line.startsWith("•"));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).not.toContain(PARTIAL_BUCKET_MARKER);
+    expect(lines[1]).toContain(PARTIAL_BUCKET_MARKER);
   });
 
   it("leaves a bucket alone when the vendor's label is not a date it can read", () => {

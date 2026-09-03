@@ -188,25 +188,30 @@ export function renderProfilePoint(point: BacklinkProfilePoint, partial = false)
  * or rewriting a vendor row is what NEVER #7 forbids. The line gets a marker and the answer gets
  * one sentence.
  *
- * WHY STRICTLY AFTER TODAY, and not "today or later": a label equal to today is genuinely
- * ambiguous (a daily bucket for today is unfinished; a monthly bucket labelled on the last day
- * of the month is only unfinished until midnight), and this module cannot tell which without
- * knowing the vendor's own cut-off. A label in the FUTURE is unambiguous on any reading, so that
- * is the only case claimed. Erring here costs an unmarked line; erring the other way would put a
- * claim on a bucket that may well be complete.
+ * WHERE THE BOUNDARY IS: TODAY OR LATER, not strictly later. THE BUCKET LABEL IS THE END OF THE
+ * PERIOD rather than a point inside it — that is how both endpoints label a bucket, and it is
+ * what settles this comparison. A bucket labelled today covers a period that ENDS today, and at
+ * the moment the call is answered today is not over, which is precisely what the marker says.
+ * The first version of this rule compared strictly and defended it by calling such a bucket
+ * "only unfinished until midnight"; that read the label as an instant instead of a boundary. It
+ * also made the rule miss the case it most exists for: on `day` grouping the last bucket is
+ * labelled today on EVERY call, so the freshest line — the first one a reader looks at — was the
+ * one left unmarked.
  */
 export const PARTIAL_BUCKET_MARKER = " — PARTIAL: this period has not ended yet";
 
 /** The one sentence that says what {@link PARTIAL_BUCKET_MARKER} means. Printed at most once. */
 export const PARTIAL_BUCKET_NOTE =
-  "One or more buckets above are labelled with a date in the future, which means the period they " +
-  "cover has not finished. DataForSEO still returns a row for such a bucket, and its figures are " +
-  "the ones it has so far — a 0 there is not a measurement of the whole period, and a profile " +
-  "line that repeats the previous bucket is not evidence that nothing changed. Compare complete " +
-  "buckets with complete buckets.";
+  "One or more buckets above cover a period that has not finished: DataForSEO labels a bucket " +
+  "with the END of its period, and those labels are today or later. It still returns a row for " +
+  "such a bucket, and its figures are the ones it has so far — a 0 there is not a measurement of " +
+  "the whole period, and a profile line that repeats the previous bucket is not evidence that " +
+  "nothing changed. Compare complete buckets with complete buckets.";
 
 /**
- * Whether a bucket's vendor label names a date strictly after `today`, in UTC.
+ * Whether a bucket's period has not ended: its vendor label — the END of the period — names
+ * today or a later date, in UTC. See {@link PARTIAL_BUCKET_MARKER} for why the boundary includes
+ * today.
  *
  * The label is read with its own regex rather than through `Date` parsing: an unrecognised label
  * must mean "cannot tell", not "epoch", and a `NaN` date silently compares false to everything.
@@ -214,7 +219,7 @@ export const PARTIAL_BUCKET_NOTE =
  */
 function isUnfinishedBucket(vendorDate: string, today: Date): boolean {
   const day = /^(\d{4}-\d{2}-\d{2})\b/.exec(vendorDate)?.[1];
-  return day !== undefined && day > today.toISOString().slice(0, 10);
+  return day !== undefined && day >= today.toISOString().slice(0, 10);
 }
 
 /**
