@@ -197,19 +197,28 @@ export function makeKeywordPositionsTool(deps: KeywordPositionsDeps = {}): Regis
       }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> read -> commit
       // as one chain. A read that throws releases the reserve, so a failure costs nothing.
-      return withCredits({ userId: ctx.userId }, { tool: "keyword_positions" }, async () => {
-        const rows = await loadMeasurements(ctx.userId, filter, input.limit);
-        return textResult(
-          formatKeywordPositions(subjectLabel(subject.domain, project), describeFilter(input), {
-            rows,
-            windowLimit: input.limit,
-            windowRowCount: rows.length,
-            // NEVER derived from `rows`: it is the count query's answer about the whole matching
-            // set, taken before the window was read.
-            storedMeasurementCount,
-          }),
-        );
-      });
+      //
+      // The project scope is the RESOLVED project, not the raw argument, and it is passed here
+      // rather than read off the input by the registry: charge:"handler" tools settle themselves,
+      // so they never reach the surface path where declaredProjectId supplies it (migration 0033).
+      // A bare `target` resolves to no project and stays honestly project-less.
+      return withCredits(
+        { userId: ctx.userId },
+        { tool: "keyword_positions", projectId: project?.id },
+        async () => {
+          const rows = await loadMeasurements(ctx.userId, filter, input.limit);
+          return textResult(
+            formatKeywordPositions(subjectLabel(subject.domain, project), describeFilter(input), {
+              rows,
+              windowLimit: input.limit,
+              windowRowCount: rows.length,
+              // NEVER derived from `rows`: it is the count query's answer about the whole
+              // matching set, taken before the window was read.
+              storedMeasurementCount,
+            }),
+          );
+        },
+      );
     },
   });
 }
