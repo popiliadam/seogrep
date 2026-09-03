@@ -781,3 +781,36 @@ describe("checkToolsMetaSync with the hub present", () => {
     expect(checkToolsMetaSync(["setup_project", "crawl_site"], ["index", "setup-project"]).ok).toBe(false);
   });
 });
+
+/**
+ * R-8.9 — the docs page quotes the SAME string the tool reply prints (apps/mcp/.../search-volume.ts),
+ * through a token rather than a retyped paraphrase. A page that explained one vendor figure
+ * differently from the reply that carries it is the drift this token exists to make impossible.
+ */
+describe("{{SEARCH_VOLUME_NOTE}} — the R-8.9 disclosure, from the built MCP constant", () => {
+  it("substitutes the constant it is handed", () => {
+    expect(
+      substituteProseTokens("volume. {{SEARCH_VOLUME_NOTE}}", { searchVolumeNote: "NOTE." }),
+    ).toBe("volume. NOTE.");
+  });
+
+  it("substitutes the band half separately", () => {
+    expect(
+      substituteProseTokens("{{SEARCH_VOLUME_BAND_NOTE}}", { searchVolumeBandNote: "BAND." }),
+    ).toBe("BAND.");
+  });
+
+  /**
+   * FAIL-CLOSED, and this is the half that matters: an empty constant would render NOTHING and
+   * publish a page whose only symptom is a missing sentence nobody remembers was there.
+   */
+  it("throws rather than publishing a page with the disclosure silently missing", () => {
+    expect(() => substituteProseTokens("{{SEARCH_VOLUME_NOTE}}", { searchVolumeNote: "" })).toThrow(
+      /SEARCH_VOLUME_NOTE/,
+    );
+    expect(() => substituteProseTokens("{{SEARCH_VOLUME_NOTE}}", {})).toThrow(/SEARCH_VOLUME_NOTE/);
+    expect(() =>
+      substituteProseTokens("{{SEARCH_VOLUME_BAND_NOTE}}", { searchVolumeBandNote: "   " }),
+    ).toThrow(/SEARCH_VOLUME_BAND_NOTE/);
+  });
+});
