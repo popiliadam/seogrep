@@ -908,6 +908,11 @@ export interface LiveSerpSnapshotOptions {
  * the per-request fold, so a response that omits `cost` settles at its own estimate rather than at
  * $0.00. A keyword whose request or parse fails becomes a `not_measured` row and still settles at its
  * own estimate — the other keywords were paid for and must survive it.
+ *
+ * THAT PER-KEYWORD CATCH IS ALSO WHY THIS PORT NEVER HAD THE DK-3 LEAK (measured 2026-09-03): the
+ * settlement sits below the loop, so it runs whether the vendor answered or not, and no `dfs_spend`
+ * row is left `status=open` the way the five sibling adapters left theirs. The spec that pins it is
+ * "settles — not merely 'not zero' — when EVERY keyword's request fails".
  */
 export function createLiveSerpSnapshotClient(opts: LiveSerpSnapshotOptions): SerpSnapshotPort {
   const transport = opts.transport ?? defaultDfsTransport;

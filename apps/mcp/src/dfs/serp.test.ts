@@ -625,6 +625,40 @@ describe("budget accounting", () => {
     expect(result.cost.vendor_cost_usd).not.toBe(0);
     expect(ledger.rows()[0]?.actualUsd).not.toBe(0);
   });
+
+  /**
+   * DK-3 CLASS — MEASURED HERE, AND THIS PORT WAS ALREADY CORRECT. Every sibling adapter
+   * (`discover_keywords`, `ranked_keywords`, `keyword_gap`, `research_keywords`,
+   * `relevant_pages`) left its `dfs_spend` row OPEN when the vendor failed, and one of those rows
+   * was read off production still open 45 minutes after the call died (A-3). This port does not
+   * have that defect: the per-keyword try/catch turns a dead request into a `not_measured` row and
+   * the single settlement below the loop then runs on every path.
+   *
+   * SO WHY A NEW SPEC. That property was implied, never pinned. The spec directly above asserts
+   * `actualUsd).not.toBe(0)` — and `null`, which is exactly what an OPEN row carries, satisfies
+   * `not.toBe(0)` as happily as a real settlement does. That assertion would have stayed green
+   * through the very defect the other five ports were carrying (lesson 12: an assertion more
+   * tolerant than the runtime turns a missing property into a passing test). This one names the
+   * value, so an open row reddens it.
+   *
+   * EVERY keyword fails here, which is the worst case: nothing was delivered to anybody, and the
+   * reservation must still be closed at the fold of the per-request estimates.
+   */
+  it("settles — not merely 'not zero' — when EVERY keyword's request fails", async () => {
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: false,
+      status: 502,
+      json: async () => ({}),
+    }));
+    const result = await liveClient(transport, ledger).fetchSerpSnapshot(
+      query({ keywords: ["a", "b"] }),
+    );
+    for (const row of result.rows) expect(row.outcome.status).toBe("not_measured");
+    const row = ledger.rows()[0];
+    expect(row?.actualUsd).not.toBeNull();
+    expect(row?.actualUsd).toBeCloseTo(2 * ESTIMATED_SERP_REQUEST_USD, 10);
+    expect(ledger.rows()).toHaveLength(1);
+  });
 });
 
 // =============================================================================================
