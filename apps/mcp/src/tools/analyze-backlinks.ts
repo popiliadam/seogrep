@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { renderOutputLimitNote, renderWithinBudget } from "../format/output-budget.ts";
 import {
   BACKLINKS_MAX_LIMIT,
   BACKLINK_RANK_MAX,
@@ -166,24 +167,110 @@ function vendorSpamScore(value: number | null): string {
  * can see WHICH source is suspicious without buying a second lookup. SeoGrep still adds no verdict
  * of its own: the number is printed under the vendor's field name and nothing is derived from it.
  */
-function renderReferringDomains(list: BacklinkList<ReferringDomainRow>): string {
-  if (list.rows.length === 0) return "Top referring domains: none on record.";
-  const lines = list.rows.map(
-    (row) =>
-      `• ${row.domain} — ${metric(row.backlinks)} backlinks, rank ${metric(row.rank)}, ` +
-      vendorSpamScore(row.backlinks_spam_score),
+function renderReferringDomainRow(row: ReferringDomainRow): string {
+  return (
+    `• ${row.domain} — ${metric(row.backlinks)} backlinks, rank ${metric(row.rank)}, ` +
+    vendorSpamScore(row.backlinks_spam_score)
   );
-  return `${listHeader("Top referring domains", list)}\n${lines.join("\n")}`;
 }
 
-function renderAnchors(list: BacklinkList<AnchorRow>): string {
-  if (list.rows.length === 0) return "Top anchors: none on record.";
-  const lines = list.rows.map((row) => {
-    // An empty anchor is real data (image links carry no anchor text) — label it, don't hide it.
-    const anchor = row.anchor === "" ? "(no anchor text)" : `"${row.anchor}"`;
-    return `• ${anchor} — ${metric(row.backlinks)} backlinks`;
+function renderAnchorRow(row: AnchorRow): string {
+  // An empty anchor is real data (image links carry no anchor text) — label it, don't hide it.
+  const anchor = row.anchor === "" ? "(no anchor text)" : `"${row.anchor}"`;
+  return `• ${anchor} — ${metric(row.backlinks)} backlinks`;
+}
+
+/**
+ * =====================================================================================
+ * THE OUTPUT CEILING — finding AB-1 (2026-09-04)
+ * =====================================================================================
+ * `limit` DEFAULTS to its own maximum (1,000), so the commonest 70-credit call is also the widest
+ * one this schema allows. At the row widths MEASURED on the live run — a referring-domain row ~65
+ * characters, an anchor row ~44 — a full default call computes to ~109,000 characters. That is
+ * 1.7x the 62,729-character reply a client REFUSED from the sibling `backlink_details` on
+ * 2026-08-25, where 35 credits and the vendor's $0.055 were both taken and the customer saw
+ * nothing at all. This tool is the same family at TWICE the price and never had the ceiling that
+ * incident bought.
+ *
+ * The default `limit` is NOT lowered here: it is a display control on a flat 70-credit price, and
+ * changing what the default call returns is a behaviour decision for a human (finding AB-1 carries
+ * it as a signature item). What is bounded is the RENDERED TEXT — the whole fetched window still
+ * reaches the run report in domain_lookup_runs, so nothing measured is lost.
+ *
+ * THE SPLIT. The shared ceiling is 28,000 characters (format/output-budget.ts records how that
+ * number was derived from the refusal). The referring-domain list gets the larger share: it is the
+ * list this report is bought for, and its rows are the wider ones. Both budgets sit far above what
+ * a live profile produced — 10,841 characters for 137 + 37 rows — so an ordinary lookup renders
+ * exactly as it always did, and only the calculated worst case is cut.
+ */
+export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
+const REFERRING_DOMAIN_LIST_CHAR_BUDGET = 16_000;
+const ANCHOR_LIST_CHAR_BUDGET = 8_000;
+
+/**
+ * Both lists arrive ordered by backlink count, descending — "top" in this report means exactly
+ * that (dfs/backlinks.ts pins the vendor sort) — so the rows a ceiling drops are the SMALLEST ones.
+ * The advice says which rows those were rather than selling a cheaper call: `limit` is not a price
+ * control here, and a narrower list costs the same 70 credits.
+ */
+const REFERRING_DOMAIN_TRUNCATION_ADVICE =
+  "This list is ordered by backlink count, most first, so the rows left out are the domains " +
+  "sending the fewest links. Asking for a smaller `limit` returns a shorter list but does not " +
+  `cost less: this lookup is a flat ${TOOL_COSTS.analyze_backlinks} credits whatever you ask for.`;
+
+const ANCHOR_TRUNCATION_ADVICE =
+  "This list is ordered by backlink count, most first, so the anchors left out are the ones " +
+  "carrying the fewest links.";
+
+/** One list: its header, the rows that fit the budget, and the note when some did not. */
+function renderList<Row>(list: {
+  readonly header: string;
+  readonly rows: readonly Row[];
+  readonly render: (row: Row) => string;
+  readonly budget: number;
+  readonly noun: string;
+  readonly advice: string;
+}): readonly string[] {
+  const shown = renderWithinBudget(list.rows, list.render, list.budget);
+  return [
+    // Only when a single row is itself wider than the whole budget is the block empty; the note
+    // below still says how many rows were fetched, so the reply never goes silent about them.
+    shown.block === "" ? list.header : `${list.header}\n${shown.block}`,
+    ...(shown.omitted === 0
+      ? []
+      : [renderOutputLimitNote(list.noun, shown.printed, shown.omitted, list.advice)]),
+  ];
+}
+
+/**
+ * The top referring domains. The spam score rides along because DataForSEO returns it in the SAME
+ * /backlinks/referring_domains/live body as the counts (measured 2026-08-25: poliste.com 26 in a
+ * body whose rendered row showed only backlinks and rank) — so the reader of a 70-credit profile
+ * can see WHICH source is suspicious without buying a second lookup. SeoGrep still adds no verdict
+ * of its own: the number is printed under the vendor's field name and nothing is derived from it.
+ */
+function renderReferringDomains(list: BacklinkList<ReferringDomainRow>): readonly string[] {
+  if (list.rows.length === 0) return ["Top referring domains: none on record."];
+  return renderList({
+    header: listHeader("Top referring domains", list),
+    rows: list.rows,
+    render: renderReferringDomainRow,
+    budget: REFERRING_DOMAIN_LIST_CHAR_BUDGET,
+    noun: "referring domain",
+    advice: REFERRING_DOMAIN_TRUNCATION_ADVICE,
   });
-  return `${listHeader("Top anchors", list)}\n${lines.join("\n")}`;
+}
+
+function renderAnchors(list: BacklinkList<AnchorRow>): readonly string[] {
+  if (list.rows.length === 0) return ["Top anchors: none on record."];
+  return renderList({
+    header: listHeader("Top anchors", list),
+    rows: list.rows,
+    render: renderAnchorRow,
+    budget: ANCHOR_LIST_CHAR_BUDGET,
+    noun: "anchor",
+    advice: ANCHOR_TRUNCATION_ADVICE,
+  });
 }
 
 /**
@@ -197,8 +284,8 @@ export function formatBacklinkProfile(
 ): string {
   return [
     renderSummary(profile, project),
-    renderReferringDomains(profile.top_referring_domains),
-    renderAnchors(profile.top_anchors),
+    ...renderReferringDomains(profile.top_referring_domains),
+    ...renderAnchors(profile.top_anchors),
   ].join("\n\n");
 }
 

@@ -8,7 +8,11 @@ import {
   type BacklinkProfile,
 } from "../dfs/backlinks.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
-import { formatBacklinkProfile, makeAnalyzeBacklinksTool } from "./analyze-backlinks.ts";
+import {
+  MAX_RENDERED_OUTPUT_CHARS,
+  formatBacklinkProfile,
+  makeAnalyzeBacklinksTool,
+} from "./analyze-backlinks.ts";
 import summaryFixture from "../dfs/fixtures/backlinks-summary.json";
 import referringDomainsFixture from "../dfs/fixtures/backlinks-referring-domains.json";
 import anchorsFixture from "../dfs/fixtures/backlinks-anchors.json";
@@ -152,6 +156,75 @@ describe("formatBacklinkProfile", () => {
     const text = formatBacklinkProfile(FULL_PROFILE);
     expect(text.startsWith('Backlink profile for "example.com":')).toBe(true);
     expect(text).not.toContain("your project");
+  });
+});
+
+/**
+ * THE OUTPUT CEILING (finding AB-1, 2026-09-04).
+ *
+ * `limit` DEFAULTS to its own maximum here, so the commonest 70-credit call is also the widest one
+ * the schema allows: 1,000 referring domains and 1,000 anchors. At the row widths measured on the
+ * live run (a referring-domain row ~65 characters, an anchor row ~44) that computes to ~109,000
+ * characters — 1.7x the 62,729-character reply a client REFUSED from the sibling backlink_details
+ * on 2026-08-25, with the 35 credits and the vendor's dollars taken and nothing delivered.
+ *
+ * These pin the contract that incident bought the sibling: the reply is bounded, and the rows that
+ * did not fit are stated rather than dropped in silence.
+ */
+describe("formatBacklinkProfile output ceiling", () => {
+  /** Rows shaped like the live ones (a real referring-domain row measured ~65 characters). */
+  const domainRows = (count: number) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      domain: `referring-domain-number-${index}.example.com`,
+      backlinks: 9_864,
+      rank: 302,
+      backlinks_spam_score: 6,
+    }));
+
+  const anchorRows = (count: number) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      anchor: `anchor phrase number ${index}`,
+      backlinks: 4_186,
+    }));
+
+  /** The widest call the schema permits: `limit` at its maximum, which is also its DEFAULT. */
+  const widest: BacklinkProfile = {
+    ...FULL_PROFILE,
+    top_referring_domains: { total_count: 12_372, rows: domainRows(1_000) },
+    top_anchors: { total_count: 83_736, rows: anchorRows(1_000) },
+  };
+
+  it("bounds the widest call the schema allows to one reply a client can accept", () => {
+    expect(formatBacklinkProfile(widest).length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  it("says how many rows were fetched and not printed — in BOTH lists, and that they were paid for", () => {
+    const text = formatBacklinkProfile(widest);
+    expect(text).toMatch(/Output limit reached — \d[\d,]* referring domains printed above/);
+    expect(text).toMatch(/Output limit reached — \d[\d,]* anchors printed above/);
+    expect(text).toContain("they were charged for either way");
+  });
+
+  /** A cut list keeps its rows CONTIGUOUS from the top: the vendor's order is the product claim. */
+  it("keeps the printed rows in the vendor's order, cutting only from the end", () => {
+    const text = formatBacklinkProfile(widest);
+    expect(text).toContain("• referring-domain-number-0.example.com —");
+    expect(text).toContain("• referring-domain-number-1.example.com —");
+    expect(text).not.toContain("• referring-domain-number-999.example.com —");
+  });
+
+  /**
+   * The header still counts what DataForSEO RETURNED; the note explains what was not printed. The
+   * count is matched with a regex rather than a literal because `listHeader` does not group the
+   * FETCHED count's digits (it groups the vendor total's) — a pre-existing spelling this finding
+   * does not change, and pinning either spelling as a literal would pin the wrong thing.
+   */
+  it("does not restate the truncation in the list header", () => {
+    expect(formatBacklinkProfile(widest)).toMatch(/Top referring domains \(1,?000 of 12,372\):/);
+  });
+
+  it("says nothing about an output limit on a profile that fits", () => {
+    expect(formatBacklinkProfile(FULL_PROFILE)).not.toContain("Output limit reached");
   });
 });
 
