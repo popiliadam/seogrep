@@ -22,6 +22,11 @@ import {
 } from "../dfs/discover-keywords.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
+import {
   MAX_RENDERED_OUTPUT_CHARS as BACKLINK_MAX_RENDERED_OUTPUT_CHARS,
   renderOutputLimitNote,
 } from "./backlink-details.ts";
@@ -1704,5 +1709,31 @@ describe("S23.1' — the flat-zero notes on discover_keywords", () => {
       LOCALE,
     );
     expect(text.slice(text.indexOf(FLAT))).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+  });
+});
+
+/**
+ * R-8.9 — the shared search-volume note (finding DK-2). Every mode of this tool asks DataForSEO
+ * to order by `keyword_info.search_volume` desc, so both halves print: the disclosure, and the
+ * BAND half that says an order built on a rounded figure groups rows rather than ranking them.
+ */
+describe("discover_keywords — the shared search-volume note (R-8.9)", () => {
+  it("prints the shared note under a populated window", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", [FULL_ROW]), LOCALE);
+    expect(text).toContain(SEARCH_VOLUME_NOTE);
+    expect(text).toMatch(/close variants/i);
+    expect(text).toMatch(/12[- ]month/i);
+  });
+
+  it("prints the band note, because every mode is ordered by that figure", () => {
+    const text = formatDiscoverKeywords(resultWith("ideas", [FULL_ROW]), LOCALE);
+    expect(text).toContain(SEARCH_VOLUME_BAND_NOTE);
+    expect(text).toMatch(/band/i);
+  });
+
+  it("carries the clause in the tool description too", () => {
+    const description = makeDiscoverKeywordsTool().description;
+    expect(description).toContain(SEARCH_VOLUME_DESCRIPTION_CLAUSE);
+    expect(description).toMatch(/close variants/i);
   });
 });

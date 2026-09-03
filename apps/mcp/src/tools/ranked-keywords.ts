@@ -27,6 +27,10 @@ import {
   type DomainLookupRunWriter,
 } from "../dfs/runs.ts";
 import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
+import {
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
 import { renderVendorFreshness } from "./research-keywords.ts";
 import {
   loadOwnProject,
@@ -129,7 +133,8 @@ const DESCRIPTION =
   "to look up one of your own sites. " +
   `Synchronous — returns a table immediately. Costs ${TOOL_COSTS.ranked_keywords} credits. Needs ` +
   "a paid credit balance: it is not available on trial credits. If live DataForSEO access is " +
-  "unavailable on this deployment, the tool says so and charges nothing.";
+  "unavailable on this deployment, the tool says so and charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /**
  * Group digits with commas without depending on ICU/locale data (deterministic). Kept local
@@ -471,7 +476,11 @@ export function formatRankedKeywords(
   // `!== null` tests in renderRow still decide whether a number appears at all, and every 0 still
   // prints exactly as the vendor sent it.
   const flat = flatZeroNotes(result.rows, FLAT_ZERO_COLUMNS, "keywords");
-  return flat.length === 0 ? withHint : `${withHint}\n\n${flat.join("\n\n")}`;
+  // R-8.9, from the constant four tools share (format/search-volume.ts) — finding B-3. Only the
+  // disclosure half: these rows are ordered by the caller's own `sort` (or the vendor's default),
+  // NOT by search_volume, so the band sentence would describe an ordering this tool never makes.
+  const withVolumeNote = `${withHint}\n\n${SEARCH_VOLUME_NOTE}`;
+  return flat.length === 0 ? withVolumeNote : `${withVolumeNote}\n\n${flat.join("\n\n")}`;
 }
 
 /**

@@ -3,6 +3,10 @@ import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
+import {
   resolveDefaultPort,
   type KeywordOverviewRow,
   type KeywordResearchPort,
@@ -120,7 +124,8 @@ const DESCRIPTION =
   "search-volume trend for up to 100 keywords. Synchronous — returns a table immediately. " +
   `Costs ${TOOL_COSTS.research_keywords} credits. Needs a paid ` +
   "credit balance: it is not available on trial credits. If live keyword data is unavailable " +
-  "on this deployment, the tool says so and charges nothing.";
+  "on this deployment, the tool says so and charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /** Group digits with commas without depending on ICU/locale data (deterministic). */
 function thousands(value: number): string {
@@ -321,7 +326,13 @@ export function formatKeywordOverview(
     `Search volume for ${lines.length} keyword${lines.length === 1 ? "" : "s"} ` +
     `(language ${input.language_code}, location ${input.location_code}), ` +
     `${thousands(totalVolume)} total monthly searches${missingNote}:\n${lines.join("\n")}` +
-    (freshness === null ? "" : `\n${freshness}`)
+    (freshness === null ? "" : `\n${freshness}`) +
+    // R-8.9, from the constant four tools share (format/search-volume.ts). It goes at the END,
+    // beside the freshness line, because it is a caveat about numbers the reader has just read —
+    // and it is the SAME string on all four surfaces so that one figure cannot be explained four
+    // ways. This tool prints no BAND note: its rows are in the caller's own keyword order, so a
+    // sentence about ties in a sorted list would describe an ordering it never makes.
+    `\n${SEARCH_VOLUME_NOTE}`
   );
 }
 

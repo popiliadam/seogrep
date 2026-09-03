@@ -31,6 +31,11 @@ import type { VendorWindow } from "../dfs/backlink-details.ts";
 import { renderOutputLimitNote } from "./backlink-details.ts";
 import { flatZeroNotes, type FlatZeroColumn } from "../format/flat-zero.ts";
 import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
+import {
   discoverKeywordsRunReport,
   discoverSubjectIdentity,
   writeSubjectLookupRuns,
@@ -420,7 +425,8 @@ const DESCRIPTION =
   "recommends nothing. Synchronous — everything comes back immediately. Costs " +
   `${TOOL_COSTS.discover_keywords} credits. Needs a paid credit balance: it is not available on ` +
   "trial credits. If live DataForSEO access is unavailable on this deployment, the tool says so " +
-  "and charges nothing.";
+  "and charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /** Group digits with commas without depending on ICU/locale data (deterministic). */
 function thousands(value: number): string {
@@ -805,11 +811,11 @@ function renderNoKeywords(
  *
  * WHERE THE NUMBER COMES FROM — the arithmetic, from the table above:
  *
- *   worst DEFAULT render (ideas, 100 rows)               33,447
+ *   worst DEFAULT render (ideas, 100 rows)               34,168
  *   + the output-limit note reserved at its widest          805
  *   ------------------------------------------------------------
- *   what a default lookup must be allowed to print       34,252
- *   + headroom for longer keywords than the fixtures'     5,748   (~19 more rows)
+ *   what a default lookup must be allowed to print       34,973
+ *   + headroom for longer keywords than the fixtures'     5,027   (~16 more rows)
  *   ------------------------------------------------------------
  *   MAX_RENDERED_OUTPUT_CHARS                            40,000
  *
@@ -980,7 +986,14 @@ export function formatDiscoverKeywords(
   // hard truncation that leaves fewer than MIN_FLAT_ZERO_ROWS printed values in a column, that
   // column correctly says nothing at all and simply gives its reserved room back to the rows.
   const flatReserve = flatZeroNotes(rows, FLAT_ZERO_COLUMNS, "keywords");
-  const after = [VENDOR_JUDGEMENT_NOTE, ...flatReserve];
+  // R-8.9 (finding DK-2), from the constant four tools share (format/search-volume.ts). BOTH
+  // halves print here: every mode of this tool asks DataForSEO to order by
+  // `keyword_info.search_volume` desc, so the rounding is a fact about the ORDER as well as about
+  // each figure. Measured live 2026-09-03 (ideas, tr/2792): 100 rows carried FOUR distinct volumes
+  // — 90,500 x18, 74,000 x21, 60,500 x24, 49,500 x37 — so "highest first" separated 4 rows of 100.
+  // Their length is FIXED, so they are booked in the reserve exactly as they print.
+  const volumeNotes = [SEARCH_VOLUME_NOTE, SEARCH_VOLUME_BAND_NOTE];
+  const after = [VENDOR_JUDGEMENT_NOTE, ...volumeNotes, ...flatReserve];
   // THE BUDGET IS WHAT THE PROSE LEAVES, not a fixed split. The prose is not a constant here — the
   // relevance warning appears on two modes of four, the criteria line has four ceiling variants,
   // and the heading carries the caller's own seeds — so a fixed row budget would hold on one mode
@@ -1006,6 +1019,7 @@ export function formatDiscoverKeywords(
       ? []
       : [renderOutputLimitNote("keyword", shown.printed, shown.omitted, TRUNCATION_ADVICE)]),
     VENDOR_JUDGEMENT_NOTE,
+    ...volumeNotes,
     // AT THE VERY END, one per flat column, in the order the columns are PRINTED on the rows —
     // see format/flat-zero.ts for what was measured and what these sentences are forbidden to
     // claim. They add a reading note beside the zeros and rewrite none of them.

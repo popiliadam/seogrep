@@ -8,6 +8,10 @@ import {
 } from "../dfs/client.ts";
 import { STALE_PULL_DAYS } from "../gsc-data/load.ts";
 import {
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
+import {
   formatKeywordOverview,
   isUnansweredLookup,
   makeResearchKeywordsTool,
@@ -69,10 +73,15 @@ describe("formatKeywordOverview — the OUTPUT CONTRACT the endpoint switch had 
       classicRow({ keyword: "seo software", search_volume: 22200, cpc: 9.87, competition_level: "HIGH" }),
       classicRow({ keyword: "rank tracker", search_volume: 8100, cpc: 4.1, competition_level: "LOW" }),
     ];
+    // The R-8.9 note (format/search-volume.ts) is APPENDED to this string, never woven into it:
+    // every word the pre-switch output carried is still here, in the same order, and this pin
+    // still fails on any change to them. The note is named by its constant so this spec cannot
+    // drift from the one four tools share.
     expect(formatKeywordOverview(rows, INPUT, NOW)).toBe(
       "Search volume for 2 keywords (language en, location 2840), 30,300 total monthly searches:\n" +
         "• seo software — volume 22,200, CPC $9.87, competition HIGH\n" +
-        "• rank tracker — volume 8,100, CPC $4.10, competition LOW",
+        "• rank tracker — volume 8,100, CPC $4.10, competition LOW\n" +
+        SEARCH_VOLUME_NOTE,
     );
   });
 
@@ -574,7 +583,8 @@ describe("S12 — every keyword the caller asked about is accounted for", () => 
         "• zirkonyum kaplama — no data returned for this keyword\n" +
         "• implant — volume n/a, CPC n/a, competition n/a, difficulty 38/100, intent informational\n" +
         "• implant fiyatları — DataForSEO returned no row for this keyword\n" +
-        "CPC and competition were last refreshed by DataForSEO on 2026-08-11 (6 days ago).",
+        "CPC and competition were last refreshed by DataForSEO on 2026-08-11 (6 days ago).\n" +
+        SEARCH_VOLUME_NOTE,
     );
   });
 
@@ -637,5 +647,31 @@ describe("S12 — a lookup that measured nothing is not an answer", () => {
       ],
     });
     expect(isUnansweredLookup(rows)).toBe(false);
+  });
+});
+
+/**
+ * R-8.9 — WHAT A SEARCH VOLUME IS, from the ONE constant four tools share.
+ *
+ * Both halves are pinned on purpose (lesson 11): `toContain(SEARCH_VOLUME_NOTE)` proves the text
+ * came from the shared constant rather than a paraphrase typed here, and the fragment regex proves
+ * the constant still SAYS something — emptying it would satisfy `toContain` alone.
+ */
+describe("research_keywords — the shared search-volume note (R-8.9)", () => {
+  it("prints the shared note under a populated answer", () => {
+    const text = formatKeywordOverview(
+      [classicRow({ keyword: "seo software", search_volume: 22200 })],
+      asked("seo software"),
+      NOW,
+    );
+    expect(text).toContain(SEARCH_VOLUME_NOTE);
+    expect(text).toMatch(/close variants/i);
+    expect(text).toMatch(/12[- ]month/i);
+  });
+
+  it("carries the clause in the tool description too", () => {
+    const description = makeResearchKeywordsTool().description;
+    expect(description).toContain(SEARCH_VOLUME_DESCRIPTION_CLAUSE);
+    expect(description).toMatch(/close variants/i);
   });
 });

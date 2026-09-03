@@ -21,6 +21,11 @@ import {
   formatRankedKeywords,
   makeRankedKeywordsTool,
 } from "./ranked-keywords.ts";
+import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
 import fixtureResponse from "../dfs/fixtures/ranked-keywords.json";
 
 /** A row with nothing but a keyword — every expectation below adds only the field it is about. */
@@ -108,10 +113,14 @@ describe("formatRankedKeywords", () => {
     );
     // Unchanged, deliberately: everything this slice added is ABSENT from these rows, and an
     // added field must not rearrange the line a reader already knows.
+    // The R-8.9 note (format/search-volume.ts) is APPENDED as its own block: the heading and the
+    // two rows are byte-identical to what a reader already knows, and this pin still fails on any
+    // change to them.
     expect(text).toBe(
       'Ranked keywords for "example.com" (language en, location 2840) — 2 ranked keywords of 5,312:\n' +
         "• seo software — position #3, volume 22,200, https://example.com/seo-software\n" +
-        "• rank tracker — position #18, volume 8,100, https://example.com/rank-tracker",
+        "• rank tracker — position #18, volume 8,100, https://example.com/rank-tracker\n\n" +
+        SEARCH_VOLUME_NOTE,
     );
   });
 
@@ -178,7 +187,12 @@ describe("formatRankedKeywords", () => {
     // No invented code: 2792 is the measured Turkish code, and the hint must NOT hand it over
     // as if the tool knew the mapping. The hint carries NO digit at all — the only numbers in
     // the output are the caller's own echoed locale and the row figures, above it.
-    const hint = text.slice(text.indexOf("Few results."));
+    // THE HINT BLOCK, not everything after it. The R-8.9 note is a separate block below the hint
+    // and legitimately carries "12-month"; scanning to end-of-string would test that note's digits
+    // instead of the hint's, which is not what this spec is about. The claim is unchanged: the
+    // locale hint itself contains no digit, so it can hand over no guessed location code.
+    const hint = text.slice(text.indexOf("Few results.")).split("\n\n")[0]!;
+    expect(hint).toContain("country-code TLD");
     expect(hint).not.toMatch(/\d/);
   });
 
@@ -297,7 +311,11 @@ describe("formatRankedKeywords", () => {
       RENDER_INPUT,
     );
     expect(text).toContain("— 1 ranked keyword:");
-    expect(text).not.toContain(" of ");
+    // THE HEADING LINE is where an "of N" clause would appear, so that is where its absence is
+    // asserted. The R-8.9 note below the table is English prose and contains an ordinary " of ";
+    // scanning the whole reply for the substring would fail on a sentence that is not a clause of
+    // this heading at all.
+    expect(text.split("\n")[0]!).not.toContain(" of ");
   });
 
   it("says so plainly when the domain ranks for nothing", () => {
@@ -1483,5 +1501,37 @@ describe("S23.1' — the flat-zero notes on ranked_keywords", () => {
       RENDER_INPUT,
     );
     expect(text.slice(text.indexOf(FLAT))).not.toMatch(/[çğışöüÇĞİŞÖÜ]/);
+  });
+});
+
+/**
+ * R-8.9 — the shared search-volume note (finding B-3). `ranked_keywords` prints the vendor's
+ * `search_volume` on every row, so it prints the disclosure; it does NOT print the BAND half,
+ * because its rows are ordered by whatever `sort` the caller chose (or the vendor's own default),
+ * not by this figure — a band sentence here would describe an ordering the tool does not make.
+ */
+describe("ranked_keywords — the shared search-volume note (R-8.9)", () => {
+  it("prints the shared note under a populated table", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "kw", search_volume: 30 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).toContain(SEARCH_VOLUME_NOTE);
+    expect(text).toMatch(/close variants/i);
+    expect(text).toMatch(/12[- ]month/i);
+  });
+
+  it("carries the clause in the tool description too", () => {
+    const description = makeRankedKeywordsTool().description;
+    expect(description).toContain(SEARCH_VOLUME_DESCRIPTION_CLAUSE);
+    expect(description).toMatch(/close variants/i);
+  });
+
+  it("does NOT claim a band ordering it never applies", () => {
+    const text = formatRankedKeywords(
+      result({ rows: [row({ keyword: "kw", search_volume: 30 })] }),
+      RENDER_INPUT,
+    );
+    expect(text).not.toContain(SEARCH_VOLUME_BAND_NOTE);
   });
 });

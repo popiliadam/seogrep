@@ -2,6 +2,11 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
 import { withNoChargeNote } from "../credits/free-refusal.ts";
 import {
   DEFAULT_KEYWORD_GAP_LIMIT,
@@ -96,7 +101,8 @@ const DESCRIPTION =
   "competitor. Synchronous — returns the list immediately. Costs " +
   `${TOOL_COSTS.keyword_gap} credits. Needs a paid credit balance: it is not available on trial ` +
   "credits. If live DataForSEO access is unavailable on this deployment, the tool says so and " +
-  "charges nothing.";
+  "charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /**
  * Group digits with commas without depending on ICU/locale data (deterministic). Kept local on
@@ -230,6 +236,12 @@ export function formatKeywordGap(gap: KeywordGapResult, input: KeywordGapRenderI
   return [
     renderGapHeader(gap, input),
     ...gap.rows.map((row) => renderGapRow(row, gap.competitor)),
+    // R-8.9, from the constant four tools share (format/search-volume.ts). BOTH halves print here:
+    // this list is ordered "highest search volume first", so the rounding is not only a fact about
+    // each figure but a fact about the ORDER — rows that share a rounded figure are a band, and a
+    // reader working down the list would otherwise read a ranking into a tie.
+    SEARCH_VOLUME_NOTE,
+    SEARCH_VOLUME_BAND_NOTE,
   ].join("\n\n");
 }
 
