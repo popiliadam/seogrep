@@ -125,7 +125,14 @@ function argumentSpans(masked: string, open: number): readonly (readonly [number
  * argument list, or bound to a `const` immediately above the call. Anything else (a helper call, a
  * spread, a second binding layer) throws rather than being guessed at.
  */
-function creditMetaSource(tool: string): string {
+interface CreditMetaSpan {
+  /** The real slice: quotes and comments intact, so `tool: "<name>"` can be found in it. */
+  readonly source: string;
+  /** The same slice masked, so a KEY is looked for in code and never in prose or a string. */
+  readonly masked: string;
+}
+
+function creditMetaSource(tool: string): CreditMetaSpan {
   const source = sourceOf(tool);
   const masked = maskCommentsAndStrings(source);
   const call = masked.indexOf("withCredits(");
@@ -147,7 +154,7 @@ function creditMetaSource(tool: string): string {
   if (expression.startsWith("{")) {
     const at = meta[0] + maskedArgument.indexOf("{");
     const [, close] = argumentSpans(masked, at).at(-1) as readonly [number, number];
-    return source.slice(at, close + 1);
+    return { source: source.slice(at, close + 1), masked: masked.slice(at, close + 1) };
   }
   if (!/^[A-Za-z_$][\w$]*$/.test(expression)) {
     throw new Error(
@@ -163,7 +170,7 @@ function creditMetaSource(tool: string): string {
   const brace = masked.indexOf("{", initializer);
   if (brace === -1) throw new Error(`the credit meta binding of "${tool}" is not an object`);
   const [, end] = argumentSpans(masked, brace).at(-1) as readonly [number, number];
-  return source.slice(brace, end + 1);
+  return { source: source.slice(brace, end + 1), masked: masked.slice(brace, end + 1) };
 }
 
 /**
@@ -173,19 +180,31 @@ function creditMetaSource(tool: string): string {
  * the failure that produced B-1 and the anchor bug before it. A meta that does not name this tool
  * is a parse that went wrong, and it fails loudly instead of answering.
  */
-function checkedMetaSource(tool: string): string {
+function checkedMetaSource(tool: string): CreditMetaSpan {
   const meta = creditMetaSource(tool);
-  if (!meta.includes(`tool: "${tool}"`)) {
+  // The IDENTITY is read off the real slice: the tool's name lives inside a string literal, which
+  // is precisely what the mask blanks out.
+  if (!meta.source.includes(`tool: "${tool}"`)) {
     throw new Error(
       `the object read as "${tool}"'s credit meta does not name it (\`tool: "${tool}"\` is not ` +
-        `in it) — the resolution is wrong, and a wrong one that answers is worse than none:\n${meta}`,
+        `in it) — the resolution is wrong, and a wrong one that answers is worse than none:\n` +
+        meta.source,
     );
   }
   return meta;
 }
 
+/**
+ * ON THE MASKED SLICE, and that is not a detail (referee finding, 2026-09-03, P3).
+ *
+ * The resolution walked the masked text and then handed back the REAL one, so this substring test
+ * ran over prose and string bodies as well as code. Measured: `{ tool: "ranked_keywords" /*
+ * projectId *\/ }` left the sweep GREEN — the ledger meta named no project and a COMMENT said the
+ * word. A field named `note: "projectId"` would do it too. The key is a fact about code, so it is
+ * looked for in code only.
+ */
 function namesProjectScope(tool: string): boolean {
-  return checkedMetaSource(tool).includes("projectId");
+  return checkedMetaSource(tool).masked.includes("projectId");
 }
 
 /**
@@ -230,7 +249,7 @@ describe("every charge:\"handler\" tool accounts for its ledger project scope (H
    * and the neighbouring object it must NOT have wandered into.
    */
   it("resolves the LEDGER meta and not the run-row write beside it (B-1)", () => {
-    const meta = checkedMetaSource("ranked_keywords");
+    const meta = checkedMetaSource("ranked_keywords").masked;
     expect(meta).toContain("projectId: subject.project?.id");
     // `target:` and `userId:` are writeRun's own keys, and `??` is how it spells its fallback.
     // Any of them in here means the scan left the guard's argument.
@@ -239,7 +258,24 @@ describe("every charge:\"handler\" tool accounts for its ledger project scope (H
     }
     // The other shape, resolved by the same code: an object literal written inline as the
     // argument, several lines below the call and with a comment between the two.
-    expect(checkedMetaSource("serp_snapshot")).toContain("projectId: subject.project?.id");
+    expect(checkedMetaSource("serp_snapshot").masked).toContain("projectId: subject.project?.id");
+  });
+
+  /**
+   * THE KEY IS COUNTED AS CODE, NEVER AS PROSE (referee P3).
+   *
+   * Both counter-cases were measured against the previous revision of this file, which tested the
+   * real slice: a `projectId` mentioned in a COMMENT inside the meta object, and one spelled as a
+   * STRING VALUE, each left the sweep green while the ledger row carried no scope. Asserted on the
+   * mask itself rather than through a tool file, because the mask is the mechanism `namesProjectScope`
+   * now depends on and a synthetic input is the only way to state both directions.
+   */
+  it("does not count a projectId written in a comment or in a string (P3)", () => {
+    expect(maskCommentsAndStrings(`{ tool: "x" /* projectId */ }`)).not.toContain("projectId");
+    expect(maskCommentsAndStrings(`{ tool: "x", note: "projectId" }`)).not.toContain("projectId");
+    expect(maskCommentsAndStrings(`{ tool: "x" } // projectId`)).not.toContain("projectId");
+    // ...while the real key, which is code, survives the mask untouched.
+    expect(maskCommentsAndStrings(`{ projectId: subject.project?.id }`)).toContain("projectId");
   });
 
   it("names a project at every call site that has one to name", () => {
