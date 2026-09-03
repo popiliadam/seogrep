@@ -145,10 +145,18 @@ describe("the pre-condition refusal reaches the client verbatim", () => {
         crawl: { pages: [], skipped: [], fetchedAt: "2026-08-09T00:00:00.000Z" },
       }),
       loadProject: NO_PROJECT,
+      findPriorRun: async () => null,
     });
     const result = await callTool(tool, "whats_next");
     expect(result.isError).toBeUndefined();
-    expect(result.content[0]?.text).toBe("pages=0");
+    // The render's own output, under the scope sentence every audit now opens with (audit/load.ts).
+    // This fake carries NO job id — the shape that sentence has to survive without printing
+    // `undefined` at a customer — so the whole reply is asserted rather than just its tail.
+    expect(result.content[0]?.text).toBe(
+      "Audited the stored crawl from 2026-08-09: 0 page(s), 0 URL(s) skipped. That is this " +
+        "project's most recent crawl — pass job_id (from list_jobs) to audit a different one, or " +
+        "run crawl_site again to widen it.\n\npages=0",
+    );
   });
 });
 

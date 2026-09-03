@@ -34,6 +34,33 @@ describe("audit formatters", () => {
     expect(text).toContain(`crawl from ${AT}`);
   });
 
+  /**
+   * THE SNIPPET NOTE (R-4.4). A meta-description finding is worth printing, but on its own it
+   * reads as "Google has nothing to show for this page", which is false: Google generates most
+   * snippets from the page content and uses the meta description only sometimes. The note says so
+   * ONCE, at the foot of the report, rather than in every per-page bullet — and it is CONDITIONAL,
+   * because a report with no meta finding has nothing to qualify.
+   */
+  it("adds the snippet note when a meta-description finding fired, and not otherwise", () => {
+    const withFinding = formatOnpageReport(
+      auditOnpage(crawl([page({ url: "https://e/a", metaDescription: null })])),
+      AT,
+    );
+    expect(withFinding).toMatch(/generates most snippets from the page content/i);
+
+    // The negative needs a page whose META is fine — this file's factory defaults everything to
+    // absent, so the guard below states what the fixture is actually testing rather than trusting
+    // it. The page still trips other rules; only the meta axis is claimed to be clean.
+    const okMeta = page({
+      url: "https://e/b",
+      metaDescription: "A meta description comfortably clear of the fifty character floor.",
+    });
+    const report = auditOnpage(crawl([okMeta]));
+    expect(report.counts.missing_meta ?? 0).toBe(0);
+    expect(report.counts.meta_too_short ?? 0).toBe(0);
+    expect(formatOnpageReport(report, AT)).not.toMatch(/generates most snippets/i);
+  });
+
   it("tech report renders the status line", () => {
     const text = formatTechReport(auditTech(crawl([page({ url: "https://e/a", status: 404 })])), AT);
     expect(text).toContain("Technical audit — 1 page(s)");
@@ -298,30 +325,29 @@ describe("a stray-edge finding is named in the summary, not summarised away", ()
    * also tripped `missing_h1` or `thin_content` would inject a third label into the line and the
    * equality below would be pinning an accident.
    */
-  const longAndStray = strayPage("https://e/long-title", {
-    title: "`Teeth Whitening Prices in Izmir — Clinic Costs, Sessions and How to Choose",
-  });
-  const metaLongAndStray = strayPage("https://e/long-meta", {
+  // The pair used to be `title_too_long` + stray and `meta_too_long` + stray. Those two rules are
+  // gone (rules/onpage.ts: Google publishes no character limit for either field), so the pairing
+  // moved to the SHORT side of the same two fields. The axis under test is unchanged — an older
+  // key must still render before an appended one — and it is now carried by a rule that exists.
+  const shortAndStray = strayPage("https://e/short-title", { title: "`Izmir" });
+  const metaShortAndStray = strayPage("https://e/short-meta", {
     title: "Whitening Costs in Izmir",
-    metaDescription:
-      "Teeth whitening prices in Izmir explained in full: what a single session costs, how many " +
-      "sessions a typical course runs to, which clinics quote per tooth, and what to ask before " +
-      "you book anything at all |",
+    metaDescription: "Whitening prices |",
   });
 
   it("fires exactly the intended two findings on each ordering fixture", () => {
-    const report = auditOnpage(crawl([longAndStray, metaLongAndStray]));
+    const report = auditOnpage(crawl([shortAndStray, metaShortAndStray]));
     expect(report.pages.map((p) => p.findings.map((f) => f.type))).toEqual([
-      ["title_too_long", "title_stray_chars"],
-      ["meta_too_long", "meta_stray_chars"],
+      ["title_too_short", "title_stray_chars"],
+      ["meta_too_short", "meta_stray_chars"],
     ]);
   });
 
   it("summarises the stray types AFTER the older types, in ONPAGE_LABELS key order", () => {
-    const text = formatOnpageReport(auditOnpage(crawl([longAndStray, metaLongAndStray])), AT);
+    const text = formatOnpageReport(auditOnpage(crawl([shortAndStray, metaShortAndStray])), AT);
     const summary = text.split("\n").find((line) => line.startsWith("Summary:")) ?? "";
     expect(summary).toBe(
-      "Summary: 1 title too long, 1 meta description too long, 1 title has stray markup, " +
+      "Summary: 1 title too short, 1 meta description too short, 1 title has stray markup, " +
         "1 meta description has stray markup.",
     );
   });
@@ -343,8 +369,8 @@ describe("a stray-edge finding is named in the summary, not summarised away", ()
    * deliberate edit here.
    */
   const SHIPPED_ORDER = [
-    "missing_title", "title_too_long", "title_too_short", "duplicate_title",
-    "missing_meta", "meta_too_long", "meta_too_short", "duplicate_meta",
+    "missing_title", "title_too_short", "duplicate_title",
+    "missing_meta", "meta_too_short", "duplicate_meta",
     "missing_h1", "multiple_h1", "missing_canonical", "canonical_elsewhere", "thin_content",
     "img_missing_alt", "title_equals_h1", "og_missing", "lang_missing", "heading_gap",
     "title_stray_chars", "meta_stray_chars",
@@ -353,6 +379,19 @@ describe("a stray-edge finding is named in the summary, not summarised away", ()
   it("freezes the shipped key order — a new rule appends, it never interleaves", () => {
     expect(ONPAGE_ORDER.slice(0, SHIPPED_ORDER.length)).toEqual(SHIPPED_ORDER);
   });
+
+  /**
+   * THE TWO RETIRED KEYS, pinned as ABSENT. Removing a rule leaves a shape a slice-prefix check
+   * cannot see: `title_too_long` re-appended at the END of the map would keep the prefix above
+   * equal and quietly put the invented-limit label back into a customer's summary line. R-4.2 and
+   * R-4.4 say no such bound is published, so the retirement is pinned from both sides.
+   */
+  it.each(["title_too_long", "meta_too_long"])(
+    "%s is retired — no label, anywhere in the map",
+    (retired) => {
+      expect(ONPAGE_ORDER).not.toContain(retired);
+    },
+  );
 });
 
 // =====================================================================================
@@ -396,7 +435,9 @@ describe("the label map names every double-quoted snake_case type literal in the
     expect(emitted).toContain("missing_title");
     expect(emitted).toContain("title_stray_chars");
     expect(emitted).toContain("meta_stray_chars");
-    expect(emitted.length).toBeGreaterThanOrEqual(20);
+    // 18, not 20: `title_too_long` and `meta_too_long` were retired with the invented character
+    // limits that produced them (R-4.2 / R-4.4). The floor tracks the engine, so it moved with it.
+    expect(emitted.length).toBeGreaterThanOrEqual(18);
   });
 
   it("leaves none of them unnamed", () => {

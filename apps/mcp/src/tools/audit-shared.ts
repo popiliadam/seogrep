@@ -1,12 +1,15 @@
 import { z } from "zod";
 import type { ToolName } from "../credits/costs.ts";
 import {
+  crawlScopeLine,
+  findPriorAuditRun,
   loadLatestCrawl,
   writeAuditRun,
   type AuditCrawl,
   type AuditReport,
   type AuditRunWriter,
   type LoadCrawlFn,
+  type PriorAuditRunFinder,
 } from "../audit/index.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
@@ -67,11 +70,52 @@ export interface AuditToolDeps {
    * default reaches getServiceClient, which requires the full prod env.
    */
   readonly loadProject?: LoadProjectFn;
+  /**
+   * The "has this crawl been audited before?" reader (default: the real findPriorAuditRun). A PORT
+   * for the same reason the other three are, and the one whose absence is harmless: it feeds a
+   * sentence, not the report.
+   */
+  readonly findPriorRun?: PriorAuditRunFinder;
 }
 
+/**
+ * `job_id` IS OPTIONAL AND IT IS THE POINT OF THE FIELD (measured live 2026-09-02).
+ *
+ * Until it existed the audits judged whichever crawl was newest and the caller could not say
+ * otherwise. On adstark.com.tr a one-page `include_paths` crawl finished three minutes after a
+ * 51-page crawl of the same site; `audit_onpage` charged 30 credits, audited the one page, and
+ * the reader had no way to reach the wider crawl that already existed and was already paid for.
+ * Omitting the field keeps the old behavior exactly, and the scope sentence now says which crawl
+ * that behavior picked.
+ */
 const inputSchema = z.object({
   project_id: z.uuid().describe("The project to audit (from setup_project / list_projects)."),
+  job_id: z
+    .uuid()
+    .optional()
+    .describe(
+      "Optional: the crawl_site job to audit (from list_jobs). Omit to audit the project's " +
+        "most recent crawl.",
+    ),
 });
+
+/**
+ * The sentence a caller gets for auditing a crawl this tool has already judged — measured live
+ * 2026-09-02: two identical calls seconds apart returned byte-for-byte the same text and were
+ * charged twice, with nothing anywhere saying the first had happened.
+ *
+ * `""` when there is no earlier run, so the caller can drop it out of the reply. The stamp is cut
+ * to the minute and labelled UTC: a Postgres timestamptz carries microseconds and an offset, and
+ * neither belongs in a sentence whose whole job is "you have seen this before".
+ */
+function repeatNote(name: ToolName, priorAt: string | null): string {
+  if (priorAt === null) return "";
+  const when = `${priorAt.slice(0, 10)} ${priorAt.slice(11, 16)} UTC`;
+  return (
+    `Note: this crawl was already audited by ${name} on ${when}. Re-running produces the same ` +
+    "report and is charged again."
+  );
+}
 
 export function makeAuditTool(
   name: ToolName,
@@ -82,12 +126,13 @@ export function makeAuditTool(
   const loadCrawl = deps.loadCrawl ?? loadLatestCrawl;
   const loadProject = deps.loadProject ?? loadOwnProject;
   const writeRun = deps.writeRun ?? writeAuditRun;
+  const findPriorRun = deps.findPriorRun ?? findPriorAuditRun;
   return defineTool({
     name,
     description,
     inputSchema,
     // charge defaults to "surface": reserve -> handler -> commit / release.
-    handler: async (ctx, { project_id }) => {
+    handler: async (ctx, { project_id, job_id }) => {
       // THE ARCHIVE GATE, first — before the crawl read, because an archived project has nothing
       // to audit whatever crawl is stored against it, and "run crawl_site first" would be the
       // wrong instruction for a site the tenant removed (crawl_site refuses it too).
@@ -111,7 +156,7 @@ export function makeAuditTool(
         throw new PreconditionNotMetError(ARCHIVED_PROJECT_MESSAGE);
       }
 
-      const load = await loadCrawl(ctx.userId, project_id);
+      const load = await loadCrawl(ctx.userId, project_id, job_id);
       if (!load.ok) {
         // THROW so withCredits RELEASES the reserve — no charge when there is nothing to
         // audit. TYPED, because the registry's catch cannot otherwise tell this designed
@@ -125,8 +170,14 @@ export function makeAuditTool(
         throw new PreconditionNotMetError(load.error);
       }
 
+      // THE SCOPE SENTENCE COMES FIRST, and it is prepended here rather than folded into the three
+      // formatters on purpose. It is a fact about the CRAWL — which one, how big — and this is the
+      // one place that resolved it; a formatter takes a report and has never been told which job
+      // produced it. Prepending also leaves the formatters' byte-for-byte snapshots measuring what
+      // they were cut to measure: the rendering of a report, unchanged by this slice.
+      const scope = crawlScopeLine(load);
       const rendered = render(load.crawl);
-      if (typeof rendered === "string") return textResult(rendered);
+      if (typeof rendered === "string") return textResult(`${scope}\n\n${rendered}`);
 
       // THE RUN IS RECORDED BEFORE THE REPORT IS HANDED OVER, and the write is not guarded.
       // withCredits commits a handler that RETURNS and releases one that THROWS, so an error
@@ -141,11 +192,22 @@ export function makeAuditTool(
       if (load.jobId === undefined) {
         throw new Error(`${name}: crawl load carried no job id — the audit run cannot be recorded`);
       }
-      await writeRun(
-        { userId: ctx.userId, projectId: project_id, crawlJobId: load.jobId, tool: name },
-        rendered.report,
-      );
-      return textResult(rendered.text);
+      const target = {
+        userId: ctx.userId,
+        projectId: project_id,
+        crawlJobId: load.jobId,
+        tool: name,
+      };
+
+      // THE REPEAT WARNING, and it is read BEFORE the write below for the obvious reason: after it,
+      // the row this call is about to insert would be the row it found. It is keyed to the crawl
+      // that was LOADED rather than to the id the caller typed, so what is reported is what was
+      // judged. The price is untouched — an operator-signed number this slice has no mandate over
+      // — and the sentence names no figure, so it cannot drift from the table.
+      const priorAt = await findPriorRun(target);
+
+      await writeRun(target, rendered.report);
+      return textResult([scope, repeatNote(name, priorAt), rendered.text].filter(Boolean).join("\n\n"));
     },
   });
 }

@@ -34,6 +34,9 @@ const CRAWL_JOB_ID = "99999999-8888-4777-8666-555555555555";
 /** The project port's "did not resolve" answer — the archive gate stands aside on it. */
 const NO_PROJECT = async () => null;
 
+/** The prior-run port's "never audited" answer, for every spec that is not about that warning. */
+const NO_PRIOR_RUN = async () => null;
+
 /**
  * One crawl, deliberately carrying something for EACH engine to say: a page that is thin and has
  * no meta description (on-page), a 404 and a skipped URL (tech), and one page with JSON-LD while
@@ -72,7 +75,22 @@ const CRAWL: AuditCrawl = {
 };
 
 /** A loader that answers with the fixture above, standing in for the tenant-scoped query. */
-const LOAD_OK = async () => ({ ok: true as const, crawl: CRAWL, jobId: CRAWL_JOB_ID });
+const LOAD_OK = async (_u: string, _p: string, jobId?: string) => ({
+  ok: true as const,
+  crawl: CRAWL,
+  jobId: jobId ?? CRAWL_JOB_ID,
+  requested: jobId !== undefined,
+});
+
+/**
+ * THE SCOPE SENTENCE every audit now opens with (audit/load.ts states why it exists). It is
+ * spelled out here rather than computed, because it is the customer's first line and this file is
+ * where the three audits' delivered text is frozen.
+ */
+const SCOPE =
+  "Audited crawl 99999999 from 2026-08-14: 2 page(s), 1 URL(s) skipped. That is this project's " +
+  "most recent crawl — pass job_id (from list_jobs) to audit a different one, or run crawl_site " +
+  "again to widen it.";
 
 /**
  * What each audit produced BEFORE this slice: the engine's report and `format<X>Report`'s
@@ -113,6 +131,9 @@ function toolFor(render: RenderAudit, writeRun: ReturnType<typeof recorder>["wri
     loadCrawl: LOAD_OK,
     loadProject: NO_PROJECT,
     writeRun,
+    // "this crawl has not been audited before" — the DB-less default for every spec that is not
+    // about the repeat warning. The real finder reaches getServiceClient and needs a database.
+    findPriorRun: NO_PRIOR_RUN,
   });
 }
 
@@ -196,6 +217,12 @@ const SNAPSHOTS: Record<string, string> = {
     "- https://snap.example/gone",
     "    · title too short (7 chars, minimum 10)",
     "    · missing canonical",
+    // The snippet note (R-4.4), printed once at the foot because this fixture fires a
+    // meta-description finding. It belongs in the frozen text: the note is customer copy, so
+    // losing it should cost a deliberate edit here rather than pass unnoticed.
+    "",
+    "Note: Google generates most snippets from the page content itself and uses the meta " +
+      "description only sometimes, so these are opportunities rather than errors.",
   ].join("\n"),
   audit_tech: [
     "Technical audit — 2 page(s), 1 skipped (crawl from 2026-08-14T00:00:00.000Z).",
@@ -238,7 +265,7 @@ describe("the returned text is byte-identical to what the audit returned before 
 
     const result = await toolFor(render, sink.writeRun).run(CTX, { project_id: PROJECT_ID });
 
-    expect(result.content[0]?.text).toBe(SNAPSHOTS[name]);
+    expect(result.content[0]?.text).toBe(`${SCOPE}\n\n${SNAPSHOTS[name]}`);
   });
 
   /**
@@ -257,8 +284,161 @@ describe("the returned text is byte-identical to what the audit returned before 
 
     const result = await toolFor(render, sink.writeRun).run(CTX, { project_id: PROJECT_ID });
 
-    expect(result.content[0]?.text).toBe(before().text);
+    expect(result.content[0]?.text).toBe(`${SCOPE}\n\n${before().text}`);
     expect(sink.runs[0]?.report).toEqual(before().report);
+  });
+});
+
+/**
+ * WHICH CRAWL WAS JUDGED — the fix for the hole measured live on 2026-09-02 (audit/load.ts states
+ * it in full: a 30-credit audit read a one-page crawl that had displaced a 51-page one, and said
+ * nothing about either). Three things have to hold, and each is a separate way to lose it:
+ * the caller's `job_id` must REACH the loader, the scope sentence must come FIRST, and the
+ * "you could have chosen" note must appear only when they did not choose.
+ */
+describe("every audit says which crawl it judged", () => {
+  const CHOSEN = "12345678-aaaa-4bbb-8ccc-dddddddddddd";
+
+  it.each(RENDERS)("$name opens with the scope sentence, before any finding", async ({ render }) => {
+    const sink = recorder();
+
+    const result = await toolFor(render, sink.writeRun).run(CTX, { project_id: PROJECT_ID });
+
+    expect(result.content[0]?.text?.startsWith(SCOPE)).toBe(true);
+  });
+
+  it("passes the caller's job_id to the loader and audits THAT crawl", async () => {
+    const seen: (string | undefined)[] = [];
+    const sink = recorder();
+    const tool = makeAuditTool("whats_next", "d", renderOnpageAudit, {
+      loadCrawl: async (u, p, jobId) => {
+        seen.push(jobId);
+        return LOAD_OK(u, p, jobId);
+      },
+      loadProject: NO_PROJECT,
+      writeRun: sink.writeRun,
+      findPriorRun: NO_PRIOR_RUN,
+    });
+
+    const result = await tool.run(CTX, { project_id: PROJECT_ID, job_id: CHOSEN });
+
+    expect(seen).toEqual([CHOSEN]);
+    expect(result.content[0]?.text).toContain("Audited crawl 12345678 from 2026-08-14");
+    // The row points at the crawl the caller named, not at whatever was newest.
+    expect(sink.runs[0]?.target.crawlJobId).toBe(CHOSEN);
+  });
+
+  it("drops the 'pass job_id' note once the caller has passed one", async () => {
+    const sink = recorder();
+
+    const result = await toolFor(renderOnpageAudit, sink.writeRun).run(CTX, {
+      project_id: PROJECT_ID,
+      job_id: CHOSEN,
+    });
+
+    expect(result.content[0]?.text).not.toMatch(/list_jobs/);
+    expect(result.content[0]?.text).not.toMatch(/most recent crawl/);
+  });
+});
+
+/**
+ * THE SECOND IDENTICAL AUDIT, measured live 2026-09-02 on all three priced audits: the same
+ * project, the same `crawl_job_id`, seconds apart, BYTE-FOR-BYTE the same text, and a second
+ * charge with no sentence anywhere saying the first one had happened.
+ *
+ * THE PRICE IS NOT TOUCHED — it is an operator-signed number and this slice does not have a
+ * mandate over it. What was missing is the WARNING, and `audit_runs` has held the answer since
+ * migration 0024: a row already keyed to this exact (tenant, project, crawl, tool).
+ */
+describe("re-auditing a crawl that was already audited says so", () => {
+  const EARLIER = "2026-09-01T09:15:42.123456+00:00";
+
+  function toolWithPrior(prior: string | null) {
+    return makeAuditTool("whats_next", "d", renderOnpageAudit, {
+      loadCrawl: LOAD_OK,
+      loadProject: NO_PROJECT,
+      writeRun: async () => {},
+      findPriorRun: async () => prior,
+    });
+  }
+
+  it("names the tool and when it ran, right under the scope sentence", async () => {
+    const result = await toolWithPrior(EARLIER).run(CTX, { project_id: PROJECT_ID });
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(
+      "Note: this crawl was already audited by whats_next on 2026-09-01 09:15 UTC. Re-running " +
+        "produces the same report and is charged again.",
+    );
+    // Under the scope sentence, above the report: both lines are about the INPUT.
+    expect(text.indexOf("already audited")).toBeGreaterThan(text.indexOf("Audited crawl"));
+    expect(text.indexOf("already audited")).toBeLessThan(text.indexOf("On-page audit —"));
+  });
+
+  /**
+   * THE LOOKUP RUNS BEFORE THE WRITE, and nothing else in this file can see it.
+   *
+   * Measured 2026-09-02: moving `findPriorRun` BELOW `writeRun` left the whole fast lane green at
+   * 3820/3820. The ordering is not cosmetic — after the write, the row this very call just
+   * inserted IS the row the lookup finds, so every FIRST audit of a crawl would answer "this crawl
+   * was already audited by X on <the current minute>". The customer-visible failure is a warning
+   * that is always on, which is a warning nobody reads.
+   *
+   * The two ports cannot catch it separately: each fake sees only its own invocation and both are
+   * called exactly once either way. ONE SHARED LOG is what makes the sequence observable at all.
+   */
+  it("looks the prior run up BEFORE recording this one, so it cannot find itself", async () => {
+    const calls: string[] = [];
+    const tool = makeAuditTool("whats_next", "d", renderOnpageAudit, {
+      loadCrawl: LOAD_OK,
+      loadProject: NO_PROJECT,
+      findPriorRun: async () => {
+        calls.push("findPriorRun");
+        return null;
+      },
+      writeRun: async () => {
+        calls.push("writeRun");
+      },
+    });
+
+    await tool.run(CTX, { project_id: PROJECT_ID });
+
+    expect(calls).toEqual(["findPriorRun", "writeRun"]);
+  });
+
+  it("says nothing when this crawl has not been audited by this tool before", async () => {
+    const result = await toolWithPrior(null).run(CTX, { project_id: PROJECT_ID });
+
+    expect(result.content[0]?.text).not.toMatch(/already audited/i);
+  });
+
+  /**
+   * THE LOOKUP IS KEYED TO THE CRAWL THAT WAS LOADED, not to the id the caller typed. They are the
+   * same value on the happy path and this pins that they stay the same value: a lookup keyed to
+   * the request would warn about a crawl the tool did not read.
+   */
+  it("asks about the crawl it actually loaded, under this tenant and tool", async () => {
+    const asked: AuditRunTarget[] = [];
+    const tool = makeAuditTool("whats_next", "d", renderOnpageAudit, {
+      loadCrawl: LOAD_OK,
+      loadProject: NO_PROJECT,
+      writeRun: async () => {},
+      findPriorRun: async (target) => {
+        asked.push(target);
+        return null;
+      },
+    });
+
+    await tool.run(CTX, { project_id: PROJECT_ID });
+
+    expect(asked).toEqual([
+      {
+        userId: CTX.userId,
+        projectId: PROJECT_ID,
+        crawlJobId: CRAWL_JOB_ID,
+        tool: "whats_next",
+      },
+    ]);
   });
 });
 
@@ -275,6 +455,7 @@ describe("a lost run is not a delivered audit", () => {
       writeRun: async () => {
         throw new Error("audit_onpage: audit_runs write failed (simulated transport loss)");
       },
+      findPriorRun: NO_PRIOR_RUN,
     });
 
     await expect(tool.run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(
@@ -293,6 +474,7 @@ describe("a lost run is not a delivered audit", () => {
       loadCrawl: async () => ({ ok: true as const, crawl: CRAWL }),
       loadProject: NO_PROJECT,
       writeRun: sink.writeRun,
+      findPriorRun: NO_PRIOR_RUN,
     });
 
     await expect(tool.run(CTX, { project_id: PROJECT_ID })).rejects.toThrow(/job id/i);
@@ -311,7 +493,7 @@ describe("a lost run is not a delivered audit", () => {
       project_id: PROJECT_ID,
     });
 
-    expect(result.content[0]?.text).toBe("pages=2");
+    expect(result.content[0]?.text).toBe(`${SCOPE}\n\npages=2`);
     expect(sink.runs).toHaveLength(0);
   });
 });

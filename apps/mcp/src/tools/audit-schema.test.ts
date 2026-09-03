@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeQueryDb } from "../test/fake-query.ts";
 
 /**
  * THE LEDGER, faked down to the calls it receives — the instrument S-B3 says this lane lacked.
@@ -9,6 +10,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * fake supplies — only the sequence of settlement calls the code chose to make.
  */
 const rpcCalls: string[] = [];
+
+/**
+ * `from` IS HERE BECAUSE THE DELIVERED-AUDIT PATH READS A TABLE, and a fake that stopped at `rpc`
+ * made that a TypeError rather than a measurement (2026-09-03, when this file and the audit slice
+ * met on main). `audit_runs` is read on the way out — "has this crawl been audited before?" — and
+ * `findPriorAuditRun` is fail-open, so the audit would survive a missing `from` either way. It is
+ * supplied anyway: a control case that reaches its assertion by falling into a catch is measuring
+ * the catch. The recorder is the shared one and applies no filter, so it answers "never audited"
+ * and this file goes on measuring exactly what it says it measures — the settlement calls.
+ */
+const auditRuns = createFakeQueryDb();
 vi.mock("../db.ts", () => ({
   getServiceClient: () => ({
     rpc: (name: string) => {
@@ -17,6 +29,7 @@ vi.mock("../db.ts", () => ({
         name === "reserve_credits" ? { data: "reserve-1", error: null } : { data: null, error: null },
       );
     },
+    from: auditRuns.client.from.bind(auditRuns.client),
   }),
 }));
 

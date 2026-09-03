@@ -10,26 +10,33 @@ import type { AuditCrawl, AuditPage } from "../crawl-data.ts";
  * human look" signals, not hard rules.
  */
 
-// Titles beyond ~60 chars are routinely truncated in Google's results; below ~10 chars
-// they are rarely descriptive enough to earn a click.
-const TITLE_MAX = 60;
+/**
+ * THERE IS NO UPPER BOUND ON A TITLE OR A META DESCRIPTION, and the absence is a decision
+ * (measured against Google's own pages 2026-09-02; R-4.2 / R-4.4 in the reference list).
+ *
+ * This engine used to carry TITLE_MAX = 60 and META_MAX = 160 and to report a breach of either as
+ * `title too long (65 chars, limit 60)`. Google publishes NO character limit for either field: a
+ * title link is truncated to the DEVICE WIDTH when it is truncated at all, and a snippet is
+ * generated primarily FROM THE PAGE CONTENT with the meta description used only sometimes. The
+ * "60 character rule" appears in no Google document. Selling an invented bound to a paying
+ * customer as a published one is the failure this removal exists to end — and no replacement
+ * number is introduced, because the honest answer is that no such number exists.
+ *
+ * The MINIMUMS stay, and the difference is what each one claims. A ten-character title and a
+ * fifty-character description are claims about the PAGE (too little text to describe itself or to
+ * use the space it owns), not claims about a limit Google enforces.
+ */
 const TITLE_MIN = 10;
-// Meta descriptions are truncated around ~160 chars; under ~50 they under-use the snippet.
-const META_MAX = 160;
 const META_MIN = 50;
 // Pages under ~200 words seldom carry enough substance to rank or satisfy intent.
 const THIN_CONTENT_WORDS = 200;
 
 /**
- * EVERY THRESHOLD FINDING CARRIES ITS THRESHOLD. "title too long (62 chars)" tells the reader they
- * broke a rule but not which one, so they cannot tell 2 over from 30 over — and in a 30-credit
- * report that is the difference between "trim two words" and "rewrite it". The measured value and
+ * EVERY THRESHOLD FINDING CARRIES ITS THRESHOLD. "title too short (7 chars)" tells the reader they
+ * broke a rule but not which one, so they cannot tell 2 under from 30 under. The measured value and
  * the bound it broke are therefore rendered together, from the constants above, so the two can
  * never drift apart in the prose.
  */
-function overLimit(measured: number, unit: string, limit: number): string {
-  return `(${measured} ${unit}, limit ${limit})`;
-}
 function underMinimum(measured: number, unit: string, minimum: number): string {
   return `(${measured} ${unit}, minimum ${minimum})`;
 }
@@ -204,8 +211,7 @@ function findingsFor(
 
   if (!title) out.push({ type: "missing_title", text: "missing title" });
   else {
-    if (title.length > TITLE_MAX) out.push({ type: "title_too_long", text: `title too long ${overLimit(title.length, "chars", TITLE_MAX)}` });
-    else if (title.length < TITLE_MIN) out.push({ type: "title_too_short", text: `title too short ${underMinimum(title.length, "chars", TITLE_MIN)}` });
+    if (title.length < TITLE_MIN) out.push({ type: "title_too_short", text: `title too short ${underMinimum(title.length, "chars", TITLE_MIN)}` });
     if (dupTitles.has(title)) out.push({ type: "duplicate_title", text: "duplicate title (shared with another page)" });
     const stray = strayFinding("title", "title_stray_chars", title);
     if (stray) out.push(stray);
@@ -213,8 +219,7 @@ function findingsFor(
 
   if (!meta) out.push({ type: "missing_meta", text: "missing meta description" });
   else {
-    if (meta.length > META_MAX) out.push({ type: "meta_too_long", text: `meta description too long ${overLimit(meta.length, "chars", META_MAX)}` });
-    else if (meta.length < META_MIN) out.push({ type: "meta_too_short", text: `meta description too short ${underMinimum(meta.length, "chars", META_MIN)}` });
+    if (meta.length < META_MIN) out.push({ type: "meta_too_short", text: `meta description too short ${underMinimum(meta.length, "chars", META_MIN)}` });
     if (dupMetas.has(meta)) out.push({ type: "duplicate_meta", text: "duplicate meta description (shared with another page)" });
     const stray = strayFinding("meta description", "meta_stray_chars", meta);
     if (stray) out.push(stray);

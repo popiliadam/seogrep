@@ -149,13 +149,45 @@ describe("the tool surface", () => {
     expect(auditContentTool.description).toContain(`Costs ${TOOL_COSTS.audit_content} credits.`);
   });
 
-  it("requires project_id and nothing else", () => {
+  /**
+   * `job_id` REACHES THE CRAWL LOADER. The schema assertion below proves the field is ACCEPTED;
+   * this proves it is USED — a tool that declared the selector and then loaded the newest crawl
+   * anyway would pass every schema check and still audit the wrong pages, which is the failure the
+   * field exists to end.
+   */
+  it("hands the caller's job_id to the crawl loader, and names that crawl", async () => {
+    const seen: (string | undefined)[] = [];
+    const chosen = "12345678-aaaa-4bbb-8ccc-dddddddddddd";
+    const tool = makeContentAuditTool("whats_next", {
+      loadPull: async () => OK_PULL,
+      loadCrawl: async (_u, _p, jobId) => {
+        seen.push(jobId);
+        return { ok: true, crawl: CRAWL, jobId: jobId ?? CRAWL_JOB_ID, requested: true };
+      },
+      loadProject: async () => null,
+      writeRun: async () => {},
+    });
+
+    const result = await tool.run(CTX, { project_id: PROJECT_ID, job_id: chosen });
+
+    expect(seen).toEqual([chosen]);
+    expect(result.content[0]?.text).toMatch(/^Audited crawl 12345678 from /);
+  });
+
+  /**
+   * `project_id` is the ONLY required field, and `job_id` is the only optional one. The two halves
+   * are asserted separately on purpose: `required` is the money-shaped claim (nothing else may be
+   * demanded before a 12-credit call), and the property list is the surface claim — a third field
+   * appearing here is a change to what the LLM may send and should cost a deliberate edit.
+   */
+  it("requires project_id and offers job_id, and nothing else", () => {
     expect(auditContentTool.inputJsonSchema).toMatchObject({
       type: "object",
       required: ["project_id"],
     });
     expect(Object.keys((auditContentTool.inputJsonSchema as { properties: object }).properties)).toEqual([
       "project_id",
+      "job_id",
     ]);
   });
 });
@@ -320,7 +352,12 @@ describe("the delivered report", () => {
    */
   it("LEADS with the coverage disclosure, before any finding", async () => {
     const text = await textOf();
-    expect(text.startsWith("Checked 3 of 4 query/page pairs")).toBe(true);
+    // The scope sentence (which crawl was judged, audit/load.ts) now sits above it — one line
+    // about the INPUT, then the coverage ratio about the ANSWER. Both are still before the list,
+    // which is the property this test was cut to defend.
+    const lines = text.split("\n\n");
+    expect(lines[0]).toMatch(/^Audited /);
+    expect(lines[1]?.startsWith("Checked 3 of 4 query/page pairs")).toBe(true);
     expect(text.indexOf("could not be checked")).toBeLessThan(text.indexOf("Current title:"));
   });
 });
@@ -690,5 +727,117 @@ describe("a finding with nothing to say is dropped, not printed empty", () => {
     expect(text).not.toMatch(/missing "daha"/);
     // It leaves by the FUNCTION-word door, not the brand one: the brand gate only thinned it.
     expect(text).toMatch(/Excluded 1 query whose only missing words were function words/);
+  });
+});
+
+/**
+ * PAST THE CAP — the one region of this tool no fixture had ever reached, and the region two of
+ * its own comments say the design exists for.
+ *
+ * `audit-content.ts` runs the engine UNCAPPED and applies the cap only after both exclusion gates,
+ * and it re-derives `total` from the KEPT list. Both were measured unpinned on 2026-09-02: putting
+ * `MAX_CONTENT_MISMATCHES` back as the engine's limit, and setting `total` back to the engine's
+ * own count, each left the whole 244-test audit lane green. The reason was the fixtures, not the
+ * assertions — the largest crawl in this file produced NINE mismatching pairs against a cap of
+ * fifty, so no test could tell a capped engine from an uncapped one.
+ *
+ * The fixture below is built to straddle the cap deliberately:
+ *   · 52 ordinary mismatches at 1000 down to 949 impressions — all survive both gates;
+ *   ·  4 brand-only rows at 10..7 impressions — the brand gate drops them;
+ *   ·  4 function-word-only rows at 6..3 impressions — the function gate drops them.
+ *
+ * The eight excluded rows sit BELOW the cap on purpose. Uncapped, the engine hands over all 60,
+ * the gates remove 8, `total` is 52 and the shortlist is the first 50. Capped, the engine hands
+ * over the top 50 — which contains none of the eight — so both exclusion notes vanish and `total`
+ * reads 50. And with `total` taken from the engine instead of the kept list it reads 60, promising
+ * the customer ten findings the filters have already thrown away. Three different numbers, one
+ * fixture, each of the two invariants failing in its own way.
+ */
+describe("the cap sits AFTER the filters, and the headline counts what survived them", () => {
+  const HOST = "https://brandhost.test";
+  const BIG_PROPERTY = `${HOST}/`;
+  const ORDINARY = 52;
+
+  const bigRows: GscRow[] = [
+    ...Array.from({ length: ORDINARY }, (_, i) =>
+      gscRow({
+        query: `alpha${i} widget`,
+        page: `${HOST}/p${i}`,
+        impressions: 1000 - i,
+        clicks: 1,
+        position: 9,
+      }),
+    ),
+    // Brand-only: the single missing word is the customer's own name.
+    ...Array.from({ length: 4 }, (_, i) =>
+      gscRow({
+        query: "brandhost",
+        page: `${HOST}/b${i}`,
+        impressions: 10 - i,
+        clicks: 0,
+        position: 20,
+      }),
+    ),
+    // Function-word-only: "how" and "best" are both in the function list.
+    ...Array.from({ length: 4 }, (_, i) =>
+      gscRow({
+        query: "how best",
+        page: `${HOST}/f${i}`,
+        impressions: 6 - i,
+        clicks: 0,
+        position: 25,
+      }),
+    ),
+  ];
+
+  const bigPages: AuditPage[] = bigRows.map((row) =>
+    crawlPage({ url: row.page, title: `Untitled ${row.page.slice(HOST.length)}` }),
+  );
+
+  /** THE FIXTURE GUARD: every row above really is a mismatch, and there really are more than 50. */
+  it("produces 60 mismatching pairs before any filter runs", () => {
+    const raw = analyzeTitleQueryMatch(
+      bigRows.map((r) => ({
+        query: r.query,
+        page: r.page,
+        impressions: r.impressions,
+        clicks: r.clicks,
+      })),
+      bigPages.map((p) => ({ url: p.url, title: p.title, h1s: p.h1s })),
+      Number.MAX_SAFE_INTEGER,
+    );
+    expect(raw.total).toBe(60);
+  });
+
+  it("counts the survivors, not the engine's list, and states the remainder from them", async () => {
+    const written: Written[] = [];
+    const text = await textOf(written, {
+      pull: {
+        ok: true,
+        pull: pullData(bigRows, [], 90, BIG_PROPERTY),
+        pulledAt: PULLED_AT,
+        jobId: PULL_JOB_ID,
+      },
+      crawl: { ok: true, crawl: { ...CRAWL, pages: bigPages }, jobId: CRAWL_JOB_ID },
+    });
+
+    // 60 found, 8 filtered, 52 kept — and the shortlist is the first 50 OF THE KEPT.
+    expect(written[0]?.report.total).toBe(52);
+    expect(text).toContain("…and 2 more query/page pairs mismatch.");
+  });
+
+  it("lets the gates see the rows the cap would have hidden, and says how many it dropped", async () => {
+    const text = await textOf([], {
+      pull: {
+        ok: true,
+        pull: pullData(bigRows, [], 90, BIG_PROPERTY),
+        pulledAt: PULLED_AT,
+        jobId: PULL_JOB_ID,
+      },
+      crawl: { ok: true, crawl: { ...CRAWL, pages: bigPages }, jobId: CRAWL_JOB_ID },
+    });
+
+    expect(text).toMatch(/Excluded 4 queries whose only missing words were your own brand name/);
+    expect(text).toMatch(/Excluded 4 queries whose only missing words were function words/);
   });
 });
