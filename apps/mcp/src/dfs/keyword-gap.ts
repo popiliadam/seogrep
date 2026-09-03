@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -321,9 +327,16 @@ export interface LiveKeywordGapOptions {
 
 /**
  * The real (paid) keyword-gap client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized to
- * the requested row cap; (2) ONE request; (3) ONE settlement with the real cost. A failure at (2)
- * leaves the reservation open at its full estimate, which is never less than the spend that
- * really happened.
+ * the requested row cap; (2) ONE request; (3) ONE settlement with the real cost.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3 class, 2026-09-03). This
+ * used to say a failure at (2) "leaves the reservation open at its full estimate". That was true
+ * and its money argument was sound, but production measured what it costs on the sibling
+ * `relevant_pages` port (A-3): a `dfs_spend` row `status=open · actual null`, still open 45
+ * minutes after the call died. `status=open` is the operator's one signal for a call in flight.
+ * The row now settles AT ITS ESTIMATE, which is what an open row already counted as through
+ * 0014's `coalesce(actual_usd, estimated_usd)` — the $3 cap sees the identical number either way
+ * (NEVER #5). See settleFailedSpend.
  */
 export function createLiveKeywordGapClient(opts: LiveKeywordGapOptions): KeywordGapPort {
   const transport = opts.transport ?? defaultDfsTransport;
@@ -338,32 +351,44 @@ export function createLiveKeywordGapClient(opts: LiveKeywordGapOptions): Keyword
         DFS_DOMAIN_INTERSECTION_ENDPOINT,
         ledger,
       );
-      const response = await transport(DFS_DOMAIN_INTERSECTION_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify([
-          {
-            // target1 is the RIVAL and target2 is the caller's own domain: with
-            // `intersections: false` DataForSEO returns what target1 ranks for and target2 does
-            // not, so swapping these two would answer the opposite question at the same price.
-            target1: query.competitor,
-            target2: query.target,
-            intersections: false,
-            item_types: ITEM_TYPES_ORGANIC,
-            limit: query.limit,
-            language_code: query.language_code,
-            location_code: query.location_code,
-            order_by: ORDER_BY_SEARCH_VOLUME_DESC,
-          },
-        ]),
-      });
-      if (!response.ok) {
-        throw new Error(
-          `DataForSEO request failed: HTTP ${response.status} (${DFS_DOMAIN_INTERSECTION_ENDPOINT})`,
-        );
+      // The try covers the REQUEST AND THE PARSE — the whole span between the reservation and its
+      // settlement. Not a `finally`: that would also run after the success settlement below and
+      // turn every healthy call into a doomed second settle.
+      let raw: unknown;
+      let parsed: ReturnType<typeof parseKeywordGapResponse>;
+      try {
+        const response = await transport(DFS_DOMAIN_INTERSECTION_ENDPOINT, {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify([
+            {
+              // target1 is the RIVAL and target2 is the caller's own domain: with
+              // `intersections: false` DataForSEO returns what target1 ranks for and target2 does
+              // not, so swapping these two would answer the opposite question at the same price.
+              target1: query.competitor,
+              target2: query.target,
+              intersections: false,
+              item_types: ITEM_TYPES_ORGANIC,
+              limit: query.limit,
+              language_code: query.language_code,
+              location_code: query.location_code,
+              order_by: ORDER_BY_SEARCH_VOLUME_DESC,
+            },
+          ]),
+        });
+        if (!response.ok) {
+          throw new Error(
+            `DataForSEO request failed: HTTP ${response.status} (${DFS_DOMAIN_INTERSECTION_ENDPOINT})`,
+          );
+        }
+        raw = await response.json();
+        parsed = parseKeywordGapResponse(raw);
+      } catch (error) {
+        // Closes the row without moving today's total, and never throws, so the ORIGINAL error
+        // stays the one the caller sees.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
       }
-      const raw: unknown = await response.json();
-      const parsed = parseKeywordGapResponse(raw);
       await settleSpend(
         reservation,
         extractKeywordGapCostUsd(raw) ?? estimateKeywordGapUsd(query.limit),
