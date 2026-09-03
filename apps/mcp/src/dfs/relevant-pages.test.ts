@@ -971,7 +971,9 @@ describe("budget", () => {
    *
    * Both failure shapes, because they fail in different places and one `try` around the wrong span
    * would catch only the first: the vendor never answering usefully (HTTP), and the vendor
-   * answering with a REJECTED TASK, which is what the live call actually took.
+   * answering with a REJECTED TASK. The second is INFERRED from the live symptoms — a paid call
+   * that came back an error and left its reservation open — and the non-20000 task itself was
+   * never observed, so the envelope below is a fixture and not a recording.
    */
   it("SETTLES the reservation at its estimate when the request fails", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({
@@ -992,7 +994,7 @@ describe("budget", () => {
     await expect(ledger.todayUsd()).resolves.toBe(estimateRelevantPagesUsd(400));
   });
 
-  it("settles it when the vendor REJECTS the task, which is the shape that was measured", async () => {
+  it("settles it when the vendor REJECTS the task — the shape INFERRED from the live symptoms (non-20000 task was not observed)", async () => {
     // A non-20000 task carrying `cost: 0`. Settling at that reported zero would report a call the
     // vendor may well have billed as free; the estimate is what is booked instead.
     const rejected = {
