@@ -179,6 +179,26 @@ export function renderWindowCaption(
   const shown =
     `${label} — ${thousands(rows)} ${rows === 1 ? noun : plural} in this window ` +
     `(offset ${thousands(window.window_offset)}, limit ${thousands(window.window_limit)})`;
+  // AN EMPTY WINDOW'S `total_count: 0` COUNTS THE WINDOW, NOT THE TARGET — finding BD-4.
+  //
+  // MEASURED 2026-09-03 on a paid 35-credit lookup (dentnotion.com, limit 5, offset 19,000):
+  // DataForSEO answered the out-of-range window with no rows AND `total_count: 0`, and the caption
+  // below turned that into "DataForSEO counts 0 backlinks for this target in total" — printed
+  // three lines above this reply's OWN page rows carrying 175, 18 and 17 backlinks, and for a
+  // subject `analyze_backlinks` measured at 242 backlinks / 139 referring domains. The vendor's
+  // number is real; the sentence built on it was false. So when the window came back EMPTY and the
+  // count with it is 0, the two facts are stated as the vendor stated them — under the vendor's own
+  // field name — and the reading is kept separate from them (NEVER #7).
+  //
+  // The fork is EMPTINESS, not the offset: a window is the only thing a 0 alongside no rows is
+  // known to describe, and this renderer cannot see whether offset 0 would have returned rows.
+  if (rows === 0 && window.vendor_total_count === 0) {
+    return (
+      `${shown}. DataForSEO returned no rows for this window and reported total_count 0 for it ` +
+      `— the vendor also reports that pair for a window that sits past the end of the list, so ` +
+      `this 0 describes the empty window, not the target's ${plural}:`
+    );
+  }
   // `null` is the vendor DECLINING TO SAY. It is not 0, and it is not rows.length: either
   // substitution would publish a measurement of the whole set that nobody made.
   const whole =
