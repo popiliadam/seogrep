@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import type { VendorWindow, WindowBounds } from "./backlink-details.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -815,8 +821,17 @@ export interface LiveDiscoverKeywordsOptions {
  * The real (paid) keyword-discovery client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized
  * to the clamped row cap; (2) ONE request, to the ONE endpoint this mode names; (3) ONE settlement
  * with the REAL cost. A response that omits `cost` settles at this request's own estimate, never
- * at $0.00. A failure at (2) leaves the reservation open at its full estimate, which is never less
- * than the spend that really happened.
+ * at $0.00.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3, 2026-09-03). This used to
+ * say a failure at (2) "leaves the reservation open at its full estimate". DK-3 named the way in:
+ * `location_code` is only `z.number().int().positive()` and `language_code` only `z.string()
+ * .min(2)`, so a combination DataForSEO refuses passes our schema, reaches the paid endpoint, comes
+ * back as a non-20000 task and throws — the customer is not charged, and a `dfs_spend` row nobody
+ * closes keeps eating the shared $3 ceiling. The sibling shape was read straight off production on
+ * the `relevant_pages` port (A-3). The money argument is kept: the row settles AT ITS ESTIMATE,
+ * which is what an open row already counts as (0014's `coalesce(actual_usd, estimated_usd)`), so
+ * the cap sees the identical number either way. See settleFailedSpend.
  */
 export function createLiveDiscoverKeywordsClient(
   opts: LiveDiscoverKeywordsOptions,
@@ -832,16 +847,30 @@ export function createLiveDiscoverKeywordsClient(
       const endpoint = DISCOVER_ENDPOINTS[query.mode];
       const estimate = estimateDiscoverKeywordsUsd(bounds.limit);
       const reservation = await reserveSpend(estimate, endpoint, ledger);
-      const response = await transport(endpoint, {
-        method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify([buildDiscoverRequestBody(query)]),
-      });
-      if (!response.ok) {
-        throw new Error(`DataForSEO request failed: HTTP ${response.status} (${endpoint})`);
+      // The try covers the REQUEST AND THE PARSE, which is the whole span between the reservation
+      // and its settlement: the vendor refusing the locale pair (a non-20000 task), the transport
+      // failing, and parseDiscoverResponse refusing a moved shape all throw in here, and all three
+      // used to walk out past the settlement.
+      let raw: unknown;
+      let window: VendorWindow<DiscoverKeywordRow>;
+      try {
+        const response = await transport(endpoint, {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify([buildDiscoverRequestBody(query)]),
+        });
+        if (!response.ok) {
+          throw new Error(`DataForSEO request failed: HTTP ${response.status} (${endpoint})`);
+        }
+        raw = await response.json();
+        window = parseDiscoverResponse(raw, query.mode, bounds);
+      } catch (error) {
+        // Closes the row without moving today's total, and never throws, so the ORIGINAL error is
+        // still the one the caller sees. Deliberately not a `finally`: a `finally` would also run
+        // after the success settlement below and turn every healthy call into a doomed second one.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
       }
-      const raw: unknown = await response.json();
-      const window = parseDiscoverResponse(raw, query.mode, bounds);
       // A vendor that declined to price the request settles at OUR estimate — never at $0.00,
       // which would report a paid call as free and quietly widen today's remaining budget.
       await settleSpend(

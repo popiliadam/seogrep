@@ -464,6 +464,80 @@ describe("createLiveClient (fake transport — never real HTTP)", () => {
       errorSpy.mockRestore();
     }
   });
+
+  /**
+   * DK-3 class — THE FAILING PATH WAS UNPINNED HERE ENTIRELY. Every other budget spec in this
+   * file drives a call that SUCCEEDS; nothing measured what happens to the reservation when the
+   * call dies, and what happened was that it stayed open forever. Production read the identical
+   * shape off the sibling `relevant_pages` port (A-3): `dfs_spend · status=open · actual null`,
+   * still open 45 minutes after the call died, still counting against the shared $3 ceiling.
+   *
+   * IT SETTLES AT THE ESTIMATE, and that is why this is hygiene and not a loosening: 0014's
+   * counter is `coalesce(actual_usd, estimated_usd)`, so an open row ALREADY counted at its
+   * estimate. Today's total is the same number before and after.
+   */
+  it("SETTLES the reservation at its estimate when the request fails", async () => {
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: false,
+      status: 502,
+      json: async () => ({}),
+    }));
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
+    await expect(
+      client.fetchKeywordOverview({ keywords: ["a", "b"], language_code: "en", location_code: 2840 }),
+    ).rejects.toThrow(/HTTP 502/);
+    const estimate = estimateKeywordOverviewCostUsd(2);
+    const row = ledger.rows()[0];
+    expect(row?.estimatedUsd).toBeCloseTo(estimate, 10);
+    // Closed, at the number an open row already counted as — never null, and never lower.
+    expect(row?.actualUsd).toBeCloseTo(estimate, 10);
+    expect(row?.rowCount).toBe(0);
+    await expect(todaySpendUsd(ledger)).resolves.toBeCloseTo(estimate, 10);
+  });
+
+  /**
+   * The second failure shape, and the one DK-3 names as the way in: the HTTP call succeeds and the
+   * TASK is rejected. It carries `cost: 0` — settling at that reported zero would book a call the
+   * vendor may well have billed as free and hand the rest of today's budget to the next caller.
+   *
+   * NOT CLAIMED: that the vendor answers any particular input with 40501. That costs a live paid
+   * call. What is pinned is what OUR port does with a rejected task.
+   */
+  it("settles the reservation when the vendor REJECTS the task", async () => {
+    const rejected = {
+      status_code: 20000,
+      cost: 0,
+      tasks: [{ status_code: 40501, status_message: "Invalid Field: 'location_code'", cost: 0 }],
+    };
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => rejected,
+    }));
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
+    await expect(
+      client.fetchKeywordOverview({ keywords: ["a"], language_code: "en", location_code: 999_999 }),
+    ).rejects.toThrow(/task failed \(status 40501\)/);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(estimateKeywordOverviewCostUsd(1), 10);
+    expect(ledger.rows()[0]?.actualUsd).not.toBe(0);
+  });
+
+  /**
+   * The success path must not have grown a SECOND settlement out of this. The in-memory ledger
+   * refuses a second settle of the same row and settleSpend swallows that, so the row count and
+   * the settled value — not an exception — are the evidence.
+   */
+  it("still settles a healthy call exactly once, at the vendor's real cost", async () => {
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => fixtureResponse,
+    }));
+    const client = createLiveClient({ login: "user@x.test", password: "pw", transport, ledger });
+    await client.fetchKeywordOverview({ keywords: ["one"], language_code: "en", location_code: 2840 });
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBe(fixtureResponse.cost);
+  });
 });
 
 /**

@@ -367,10 +367,61 @@ describe("createLiveKeywordGapClient (fake transport — never real HTTP)", () =
     expect(ledger.rows()[0]?.actualUsd).toBeGreaterThan(0);
   });
 
-  it("throws on a non-OK HTTP response instead of reporting an empty gap", async () => {
+  /**
+   * DK-3 class, and NEVER #8: the closing assertion here used to be the whole of this spec and it
+   * passed for the right reason — an OPEN reservation at the estimate WAS the contract, and its
+   * money half was sound. Production then measured what the contract costs on the sibling
+   * `relevant_pages` port (A-3): `status=open · actual null`, still open 45 minutes after the call
+   * died. The sound half is kept and still asserted first — today's total is the SAME number,
+   * because 0014 counts an open row at its estimate anyway.
+   */
+  it("throws on a non-OK HTTP response, and SETTLES the reservation at its estimate", async () => {
     const transport = vi.fn<DfsTransport>(async () => ({ ok: false, status: 500, json: async () => ({}) }));
     await expect(liveClient(transport, ledger).fetchKeywordGap(QUERY)).rejects.toThrow(/HTTP 500/);
-    // The reservation stays OPEN at its estimate — never less than the spend that happened.
+    // Unchanged from the old contract: never less than the spend that happened.
     expect(await todaySpendUsd(ledger)).toBeCloseTo(estimateKeywordGapUsd(QUERY.limit), 10);
+    // Closed rather than left open, at that same number, and delivering nothing to anybody.
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(estimateKeywordGapUsd(QUERY.limit), 10);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
+  });
+
+  /**
+   * THE SHAPE DK-3 IS ABOUT — the HTTP call succeeds and the TASK is rejected, which is where an
+   * unvalidated `location_code`/`language_code` pair lands. The rejected task carries `cost: 0`;
+   * settling at that reported zero would book a call the vendor may well have billed as free.
+   *
+   * NOT CLAIMED: that the vendor answers a bad locale with 40501 — measuring that costs a live
+   * paid call. What is pinned is what OUR port does with a rejected task.
+   */
+  it("settles the reservation when the vendor REJECTS the task", async () => {
+    const rejected = {
+      status_code: 20000,
+      cost: 0,
+      tasks: [{ status_code: 40501, status_message: "Invalid Field: 'location_code'", cost: 0 }],
+    };
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => rejected,
+    }));
+    await expect(liveClient(transport, ledger).fetchKeywordGap(QUERY)).rejects.toThrow(
+      /task failed \(status 40501\)/,
+    );
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(estimateKeywordGapUsd(QUERY.limit), 10);
+    expect(ledger.rows()[0]?.actualUsd).not.toBe(0);
+  });
+
+  /**
+   * The success path must not have grown a SECOND settlement out of this. The in-memory ledger
+   * refuses a second settle of the same row and settleSpend SWALLOWS that refusal, so neither an
+   * exception nor the row count can be the evidence — the settled VALUE is. Turning the catch into
+   * a `finally` settles at the ESTIMATE first and the real cost is then refused and swallowed, so
+   * the row survives carrying the wrong number; `toBeGreaterThan(0)` could not tell those apart.
+   */
+  it("still settles a healthy call exactly once, at the vendor's real cost", async () => {
+    await liveClient(fixtureTransport(), ledger).fetchKeywordGap(QUERY);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBe(FIXTURE_COST);
+    expect(FIXTURE_COST).not.toBeCloseTo(estimateKeywordGapUsd(QUERY.limit), 6);
   });
 });

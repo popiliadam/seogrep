@@ -642,8 +642,9 @@ describe("createLiveRankedKeywordsClient (fake transport — never real HTTP)", 
       transport,
       ledger,
     });
-    // A failed call leaves the reservation open at its full estimate, which is what makes the
-    // reserved amount readable here at all.
+    // A failed call is SETTLED at its full estimate (DK-3 class), and settling at exactly that
+    // number is what keeps the reserved amount readable here — the day's total is the same figure
+    // an open row contributed, which is the whole safety argument for the change.
     await expect(client.fetchRankedKeywords({ ...QUERY, limit: 10 })).rejects.toThrow(/HTTP 402/);
     expect(await todaySpendUsd(ledger)).toBeCloseTo(estimateRankedKeywordsCostUsd(10), 6);
     expect(await todaySpendUsd(ledger)).toBeLessThan(estimateRankedKeywordsCostUsd(1000));
@@ -662,14 +663,72 @@ describe("createLiveRankedKeywordsClient (fake transport — never real HTTP)", 
       ledger,
     });
     await expect(client.fetchRankedKeywords(QUERY)).rejects.toThrow(/HTTP 402/);
-    // A failed call leaves its reservation OPEN, so today keeps paying the FULL estimate: the
-    // budget errs toward refusing the next call, never toward handing the allowance back. (The
-    // pre-fix file ledger recorded $0 here — cheaper, but it is not what the fleet may spend.)
+    // A failed call still charges today the FULL estimate: the budget errs toward refusing the
+    // next call, never toward handing the allowance back. (The pre-fix file ledger recorded $0
+    // here — cheaper, but it is not what the fleet may spend.)
     expect(await todaySpendUsd(ledger)).toBeCloseTo(
       estimateRankedKeywordsCostUsd(QUERY.limit),
       5,
     );
-    expect(ledger.rows()[0]?.actualUsd).toBeNull();
+    // DK-3 class, and NEVER #8: this line used to assert `toBeNull()` and it passed for the right
+    // reason — an open row WAS the contract. The contract changed after production showed what it
+    // costs (A-3: `status=open · actual null`, still open 45 minutes after the call died). The
+    // sound half of the old claim is kept above, unchanged: today's total is the same number.
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(estimateRankedKeywordsCostUsd(QUERY.limit), 10);
+    expect(ledger.rows()[0]?.rowCount).toBe(0);
+  });
+
+  /**
+   * THE SHAPE DK-3 IS ABOUT — the HTTP call succeeds and the TASK is rejected, which is where an
+   * unvalidated `location_code`/`language_code` pair lands. The rejected task carries `cost: 0`;
+   * settling at that reported zero would book a call the vendor may well have billed as free, so
+   * OUR estimate is what goes in.
+   *
+   * NOT CLAIMED: that the vendor answers a bad locale with 40501. Measuring that costs a live paid
+   * call. What is pinned is what OUR port does with a rejected task.
+   */
+  it("settles the reservation when the vendor REJECTS the task", async () => {
+    const rejected = {
+      status_code: 20000,
+      cost: 0,
+      tasks: [{ status_code: 40501, status_message: "Invalid Field: 'location_code'", cost: 0 }],
+    };
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => rejected,
+    }));
+    const client = createLiveRankedKeywordsClient({
+      login: "user@x.test",
+      password: "pw",
+      transport,
+      ledger,
+    });
+    await expect(client.fetchRankedKeywords(QUERY)).rejects.toThrow(/task failed \(status 40501\)/);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(estimateRankedKeywordsCostUsd(QUERY.limit), 10);
+    expect(ledger.rows()[0]?.actualUsd).not.toBe(0);
+  });
+
+  /**
+   * The success path must not have grown a SECOND settlement out of this. The in-memory ledger
+   * refuses a second settle of the same row and settleSpend swallows that, so the row count and
+   * the settled value — not an exception — are the evidence.
+   */
+  it("still settles a healthy call exactly once, at the vendor's real cost", async () => {
+    const transport = vi.fn<DfsTransport>(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => fixtureResponse,
+    }));
+    const client = createLiveRankedKeywordsClient({
+      login: "user@x.test",
+      password: "pw",
+      transport,
+      ledger,
+    });
+    await client.fetchRankedKeywords(QUERY);
+    expect(ledger.rows()).toHaveLength(1);
+    expect(ledger.rows()[0]?.actualUsd).toBeCloseTo(0.132, 5);
   });
 
   /**
