@@ -3,6 +3,7 @@ import type {
   SerpPlacement,
   SerpSnapshotResult,
 } from "../dfs/serp.ts";
+import { AI_FAN_OUT_NOTE, isAiOverviewType, renderSerpFeatures } from "./serp-features.ts";
 
 /**
  * How ONE snapshot is put into words — the honesty surface of `serp_snapshot`, kept pure so the
@@ -76,17 +77,38 @@ export function renderKeywordRow(index: number, row: SerpKeywordRow): string {
   if (outcome.status === "not_measured") {
     return `${heading} — NOT MEASURED: ${outcome.reason}\n    ${outcome.means}\n${clocks}`;
   }
+  const features = `    ${renderSerpFeatures(row.observed.vendor_item_types)}`;
   if (outcome.status === "absent_from_examined_results") {
     return (
       `${heading} — not found among the ${outcome.organic_items_examined} organic ` +
-      `result(s) examined.\n    ${outcome.means}\n${clocks}`
+      `result(s) examined.\n    ${outcome.means}\n${features}\n${clocks}`
     );
   }
   const found =
     `${heading} — found in ${outcome.placements.length} of the ` +
     `${outcome.organic_items_examined} organic result(s) examined:`;
-  return [found, ...outcome.placements.map(renderPlacement), `    ${outcome.means}`, clocks].join(
-    "\n",
+  return [
+    found,
+    ...outcome.placements.map(renderPlacement),
+    `    ${outcome.means}`,
+    features,
+    clocks,
+  ].join("\n");
+}
+
+/**
+ * TRUE WHEN ANY KEYWORD'S PAGE CARRIED AN AI OVERVIEW — which is the only condition under which
+ * {@link AI_FAN_OUT_NOTE} belongs on the answer.
+ *
+ * A `not_measured` row is skipped on purpose: nothing was fetched, so its `vendor_item_types` is
+ * empty because there was no page, not because the page had no features. It is the same rule the
+ * feature line itself follows one function up.
+ */
+export function reportsAiOverview(result: SerpSnapshotResult): boolean {
+  return result.rows.some(
+    (row) =>
+      row.outcome.status !== "not_measured" &&
+      row.observed.vendor_item_types.some(isAiOverviewType),
   );
 }
 
@@ -130,11 +152,17 @@ export function formatSerpSnapshot(subject: string, result: SerpSnapshotResult):
     "Each answer below states how many organic results were actually COUNTED in the response, " +
     `which is what an absence is scoped to — never the depth of ${asked.depth_requested} that ` +
     "was asked for, since DataForSEO may return fewer results than that.";
+  // R-5.5, and only where there is a claim to qualify. An AI Overview line says the block was on
+  // that page for that keyword; it says nothing about whether this site is cited INSIDE it, and
+  // Google's query fan-out is why the two are not the same question. Printed on every answer the
+  // note would be scrolled past; printed on none, the line above reads as AI visibility.
+  const fanOut = reportsAiOverview(result) ? AI_FAN_OUT_NOTE : "";
   return [
     scope,
     meaning,
     `${CALLER_ORDER_NOTE} ${examined}`,
     result.rows.map((row, index) => renderKeywordRow(index, row)).join("\n\n"),
+    fanOut,
     storedNote(result.rows.length),
   ]
     .filter((block) => block.length > 0)

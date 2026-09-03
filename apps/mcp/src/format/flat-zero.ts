@@ -175,10 +175,34 @@ export function flatZeroNote(
 }
 
 /**
- * ONE COLUMN of a row, as this note sees it: what it is called and how to read its value off a row.
+ * ONE COLUMN of a row, as this note sees it: what it is called, how to read its value off a row,
+ * and — {@link FlatZeroColumn.printedAs} — how that value reaches the page.
  */
 export interface FlatZeroColumn<Row> extends Omit<FlatZeroSubject, "rowsNoun"> {
   readonly valueOf: (row: Row) => number | null;
+  /**
+   * THE SURFACE'S OWN ROUNDING for this column — the operation that turns the vendor's number
+   * into the digits the reader sees. `Math.round` where the row prints a whole unit; the identity
+   * where it prints the vendor's number as it arrived.
+   *
+   * REQUIRED, not optional, and this is finding B-2. MEASURED LIVE 2026-09-03 on ranked_keywords:
+   * three rows carried `etv` between 0 and 0.5, all three printed `est. traffic 0/mo`, and this
+   * note stayed silent because it was comparing the raw float to 0. The note's own sentence claims
+   * "DataForSEO reported <field> 0 for every one of the N keywords above" — so a column of printed
+   * zeros with no note beside it taught the reader that silence means "measured", which is the one
+   * lesson this module exists to stop it teaching. On a thin domain a sub-1 `etv` is the TYPICAL
+   * case, not an edge one.
+   *
+   * A DEFAULT WOULD BE THE DEFECT AGAIN. `Math.round` as a default would silently make a claim
+   * about a column that prints two decimals; identity as a default would leave the bug in place
+   * for every column added after this line. Requiring the declaration is what makes the choice
+   * visible in each column, next to the label it belongs to — the same rule this file already
+   * applies to `misreadAs` and `nonEnglishEvidence`.
+   *
+   * It NEVER introduces a rounding of its own: it must be the same operation the row's renderer
+   * performs, and the surfaces' own tests are what hold the two together.
+   */
+  readonly printedAs: (value: number) => number;
 }
 
 /**
@@ -198,7 +222,14 @@ export function flatZeroNotes<Row>(
 ): string[] {
   const notes: string[] = [];
   for (const column of columns) {
-    const note = flatZeroNote(rows.map(column.valueOf), { ...column, rowsNoun });
+    // AS PRINTED, not as received (B-2). Nulls pass through untouched: an unreported row is not a
+    // value at all, and rounding one into a zero would manufacture the very "flat" reading the
+    // three bounds above refuse to invent.
+    const printed = rows.map((row) => {
+      const value = column.valueOf(row);
+      return value === null ? null : column.printedAs(value);
+    });
+    const note = flatZeroNote(printed, { ...column, rowsNoun });
     if (note !== null) notes.push(note);
   }
   return notes;

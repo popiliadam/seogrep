@@ -8,6 +8,10 @@ import {
 } from "../dfs/client.ts";
 import { STALE_PULL_DAYS } from "../gsc-data/load.ts";
 import {
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
+import {
   formatKeywordOverview,
   isUnansweredLookup,
   makeResearchKeywordsTool,
@@ -69,10 +73,16 @@ describe("formatKeywordOverview — the OUTPUT CONTRACT the endpoint switch had 
       classicRow({ keyword: "seo software", search_volume: 22200, cpc: 9.87, competition_level: "HIGH" }),
       classicRow({ keyword: "rank tracker", search_volume: 8100, cpc: 4.1, competition_level: "LOW" }),
     ];
+    // The R-8.9 note (format/search-volume.ts) is APPENDED to this string, never woven into it:
+    // every word the pre-switch output carried is still here, in the same order, and this pin
+    // still fails on any change to them. The note is named by its constant so this spec cannot
+    // drift from the one four tools share.
     expect(formatKeywordOverview(rows, INPUT, NOW)).toBe(
-      "Search volume for 2 keywords (language en, location 2840), 30,300 total monthly searches:\n" +
+      "Search volume for 2 keywords (language en, location 2840), \u224830,300 total monthly " +
+        "searches (approximate — a sum of rounded figures):\n" +
         "• seo software — volume 22,200, CPC $9.87, competition HIGH\n" +
-        "• rank tracker — volume 8,100, CPC $4.10, competition LOW",
+        "• rank tracker — volume 8,100, CPC $4.10, competition LOW\n" +
+        SEARCH_VOLUME_NOTE,
     );
   });
 
@@ -127,7 +137,8 @@ describe("formatKeywordOverview — a repeated keyword is passed through, not si
 
   it("counts the repeat in the header and in the total, exactly as the vendor sent it", () => {
     expect(formatKeywordOverview(duplicated, asked("seo software"), NOW)).toContain(
-      "Search volume for 2 keywords (language en, location 2840), 44,400 total monthly searches:",
+      "Search volume for 2 keywords (language en, location 2840), \u224844,400 total monthly " +
+        "searches (approximate — a sum of rounded figures):",
     );
   });
 });
@@ -156,7 +167,10 @@ describe("formatKeywordOverview — no data is NOT zero volume", () => {
 
   it("counts the no-data keywords out loud in the header instead of silently averaging them in", () => {
     const text = formatKeywordOverview(rows, ASKED_THREE, NOW);
-    expect(text).toContain("22,200 total monthly searches (1 keyword returned no data):");
+    expect(text).toContain(
+      "22,200 total monthly searches (approximate — a sum of rounded figures) " +
+        "(1 keyword returned no data):",
+    );
     const many = formatKeywordOverview(
       [...rows, classicRow({ keyword: "another unknown", has_data: false })],
       ASKED_THREE,
@@ -561,20 +575,23 @@ describe("S12 — every keyword the caller asked about is accounted for", () => 
 
   it("counts the unanswered keywords — the empty row AND the absent one — in the header", () => {
     expect(renderTurkish()).toContain(
-      "Search volume for 4 keywords (language tr, location 2792), 12,100 total monthly searches (2 keywords returned no data):",
+      "Search volume for 4 keywords (language tr, location 2792), \u224812,100 total monthly " +
+        "searches (approximate — a sum of rounded figures) (2 keywords returned no data):",
     );
   });
 
   /** The whole reply, so the ORDER (vendor rows first, then the absent ones) is pinned too. */
   it("renders the whole table in one pinned shape", () => {
     expect(renderTurkish()).toBe(
-      "Search volume for 4 keywords (language tr, location 2792), 12,100 total monthly searches (2 keywords returned no data):\n" +
+      "Search volume for 4 keywords (language tr, location 2792), \u224812,100 total monthly " +
+        "searches (approximate — a sum of rounded figures) (2 keywords returned no data):\n" +
         "• diş beyazlatma fiyat — volume 12,100, CPC $0.84, competition MEDIUM, difficulty 41/100, " +
         "intent commercial (also transactional), trend +22% MoM, +8% QoQ, -5% YoY\n" +
         "• zirkonyum kaplama — no data returned for this keyword\n" +
         "• implant — volume n/a, CPC n/a, competition n/a, difficulty 38/100, intent informational\n" +
         "• implant fiyatları — DataForSEO returned no row for this keyword\n" +
-        "CPC and competition were last refreshed by DataForSEO on 2026-08-11 (6 days ago).",
+        "CPC and competition were last refreshed by DataForSEO on 2026-08-11 (6 days ago).\n" +
+        SEARCH_VOLUME_NOTE,
     );
   });
 
@@ -637,5 +654,65 @@ describe("S12 — a lookup that measured nothing is not an answer", () => {
       ],
     });
     expect(isUnansweredLookup(rows)).toBe(false);
+  });
+});
+
+/**
+ * R-8.9 — WHAT A SEARCH VOLUME IS, from the ONE constant four tools share.
+ *
+ * Both halves are pinned on purpose (lesson 11): `toContain(SEARCH_VOLUME_NOTE)` proves the text
+ * came from the shared constant rather than a paraphrase typed here, and the fragment regex proves
+ * the constant still SAYS something — emptying it would satisfy `toContain` alone.
+ */
+describe("research_keywords — the shared search-volume note (R-8.9)", () => {
+  it("prints the shared note under a populated answer", () => {
+    const text = formatKeywordOverview(
+      [classicRow({ keyword: "seo software", search_volume: 22200 })],
+      asked("seo software"),
+      NOW,
+    );
+    expect(text).toContain(SEARCH_VOLUME_NOTE);
+    expect(text).toMatch(/close variants/i);
+    expect(text).toMatch(/12[- ]month/i);
+  });
+
+  it("carries the clause in the tool description too", () => {
+    const description = makeResearchKeywordsTool().description;
+    expect(description).toContain(SEARCH_VOLUME_DESCRIPTION_CLAUSE);
+    expect(description).toMatch(/close variants/i);
+  });
+});
+
+/**
+ * RK-2 — THE ONE NUMBER ON THIS PAGE THAT DATAFORSEO NEVER SENT.
+ *
+ * The header adds the rows' volumes up. Every one of them is a figure Google ROUNDED (R-8.9), so
+ * their sum is not a measurement anybody made: R-8.9 says in as many words that rounded volumes do
+ * not add up. Printing "9,690 total monthly searches" in the product's own voice claims a
+ * precision the vendor never offered — measured live 2026-09-03 on a four-keyword lookup.
+ *
+ * The total is KEPT, not deleted: it is a useful order-of-magnitude and removing it would take a
+ * figure away from readers who already use it. What changes is that it now WEARS its status.
+ */
+describe("research_keywords — the total is labelled as the approximation it is (RK-2)", () => {
+  const rows = [
+    classicRow({ keyword: "seo software", search_volume: 22200 }),
+    classicRow({ keyword: "rank tracker", search_volume: 8100 }),
+  ];
+
+  it("marks the total approximate, and says WHY it is approximate", () => {
+    const header = formatKeywordOverview(rows, INPUT, NOW).split("\n")[0]!;
+    expect(header).toContain("≈");
+    expect(header).toMatch(/approximate/i);
+    expect(header).toMatch(/rounded/i);
+  });
+
+  it("still prints the sum itself — the figure is qualified, not removed", () => {
+    expect(formatKeywordOverview(rows, INPUT, NOW).split("\n")[0]!).toContain("30,300");
+  });
+
+  /** No second arithmetic: the product must not also publish a "±" range it never measured. */
+  it("invents no error bar of its own", () => {
+    expect(formatKeywordOverview(rows, INPUT, NOW)).not.toMatch(/±|plus or minus/i);
   });
 });

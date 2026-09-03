@@ -2,6 +2,12 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
+import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
 import { withNoChargeNote } from "../credits/free-refusal.ts";
 import {
   DEFAULT_KEYWORD_GAP_LIMIT,
@@ -96,7 +102,8 @@ const DESCRIPTION =
   "competitor. Synchronous — returns the list immediately. Costs " +
   `${TOOL_COSTS.keyword_gap} credits. Needs a paid credit balance: it is not available on trial ` +
   "credits. If live DataForSEO access is unavailable on this deployment, the tool says so and " +
-  "charges nothing.";
+  "charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /**
  * Group digits with commas without depending on ICU/locale data (deterministic). Kept local on
@@ -214,12 +221,15 @@ export interface KeywordGapRenderInput {
 
 /** The "nothing found" answer — a real result, not an error, and still charged for. */
 function renderNoGap(gap: KeywordGapResult, input: KeywordGapRenderInput): string {
-  return (
+  const none =
     `No keyword gap found for ${subjectLabel(gap.target, input.project)} against ` +
     `${gap.competitor} (language ${input.language_code}, location ${input.location_code}): ` +
     `DataForSEO holds no organic keyword that ${gap.competitor} ranks for and ` +
-    `${subjectLabel(gap.target, input.project)} does not.`
-  );
+    `${subjectLabel(gap.target, input.project)} does not.`;
+  // G-3, and this is the answer it exists for: an empty gap measured in the wrong country reads
+  // as "there is no gap" rather than "this was not your market".
+  const locale = defaultLocaleWarning(gap.target, input);
+  return locale === "" ? none : `${none}\n\n${locale}`;
 }
 
 /** Render the gap as the plain-text tool output (pure — unit-tested directly). */
@@ -229,8 +239,21 @@ export function formatKeywordGap(gap: KeywordGapResult, input: KeywordGapRenderI
   }
   return [
     renderGapHeader(gap, input),
+    // G-3. A resolved `project_id` does NOT derive the locale — a Turkish project's gap is measured
+    // in the United States, in English, unless the caller overrides it. The DEFAULT is unchanged
+    // (behaviour and price are an operator decision); it is named. Shared sentence, see
+    // format/locale-default.ts.
+    defaultLocaleWarning(gap.target, input),
     ...gap.rows.map((row) => renderGapRow(row, gap.competitor)),
-  ].join("\n\n");
+    // R-8.9, from the constant four tools share (format/search-volume.ts). BOTH halves print here:
+    // this list is ordered "highest search volume first", so the rounding is not only a fact about
+    // each figure but a fact about the ORDER — rows that share a rounded figure are a band, and a
+    // reader working down the list would otherwise read a ranking into a tie.
+    SEARCH_VOLUME_NOTE,
+    SEARCH_VOLUME_BAND_NOTE,
+  ]
+    .filter((block) => block.length > 0)
+    .join("\n\n");
 }
 
 /** Dependencies — the gap port is injectable so tests run offline (mock/disabled). */

@@ -43,6 +43,7 @@ import type {
   MeasurementStatus,
   StoredMeasurement,
 } from "./keyword-positions-store.ts";
+import { readStoredReport } from "./keyword-positions-store.ts";
 import type { TrackedDevice } from "./serp-devices.ts";
 
 const CTX: AuthContext = { userId: "user-1", keyId: "key-1" };
@@ -187,6 +188,12 @@ function memoryTable() {
     vendorReportedTimeField: row.vendor_reported_time_field ?? null,
     vendorReportedTimeValue: row.vendor_reported_time_value ?? null,
     fetchedAt: row.fetched_at as string,
+    // The projection PRODUCTION performs on this column, not an omission. `loadStoredMeasurements`
+    // runs the stored `report` jsonb through `readStoredReport`, and a double that skipped it
+    // would hand the renderer a shape the real reader never returns — the round trip this file
+    // exists to prove would then be proving something else (signed lesson 12). Nothing here type-
+    // checks it either: `tsc --noEmit` excludes `src/**/*.test.ts`.
+    report: readStoredReport(row.report, row.best_rank_group ?? null, row.best_rank_absolute ?? null),
   });
 
   return {

@@ -23,6 +23,12 @@
 
 `canlı ✔` işaretli bulgu sayısı: **2**, ikisi de `keyword_positions` (#215/#216 deploy `aa52154`, şef turu,
 Δ −10). **#217'nin canlı yarısı hiç ölçülmedi** — PR henüz merge edilmedi.
+**GÜNCELLEME (2026-09-03, dilim 4 hakem turu — ders 16):** yukarıdaki iki cümle artık bayattır. #217
+merge edildi (`bbc259d`) ve canlı yarısı İKİ ayrı şef turunda ölçüldü: Δ −25 (`pull_gsc_data`,
+`analyze_content_decay`, `detect_cannibalization`) ve Δ −10 (`find_quick_wins`) — ikisinin ekleri de
+bu dosyanın sonundadır. Sayaç **yeniden hesaplanmadı** (bu tur onu saymadı; sayılmamış bir sayıyı
+düzeltmek ders 11'in tam tuzağıdır) — `canlı ✔` bulgular artık iki ekte adlarıyla duruyor. Özgün
+sayaç satırı ölçüm turunun kaydı olduğu için SİLİNMEDİ, yanına yazıldı.
 
 ## Tool tablosu
 
@@ -30,7 +36,7 @@
 |---|---|---|---|---|
 | `keyword_positions` | **DÜZELTİLDİ** — 6 bulgu kapandı | #216 (F-1, F-2, F-3, F-4, H-1'in kendi çağrı yeri) · #215 (H-1'in aile yarısı) · F-9 kod gerektirmedi | **✔ iki bulgu** — defter satırı `project: dentnotion.com` (H-1), adstark'ta ön koşul reddi `serp_snapshot`'ı doğru sırayla adlandırıyor (F-3) | F-5 → **Dilim 4** · F-7 **İMZA** · F-6 · F-8 · F-10 · F-11 AÇIK |
 | `pull_gsc_data` | **KISMEN DÜZELTİLDİ** — 3 bulgu kapandı | #217 (B-2, B-5, B-7) | **bekliyor** — sayfalamanın gerçek GSC'de 25.000'lik sayfa döndürdüğü ve bayt bütçesinin dentnotion'da nerede bağladığı deploy sonrası | B-1 · B-3 · B-4 · B-6 AÇIK · B-2'nin **12 MB zarf kalıntısı** AÇIK (P2) · B-5'in `goals/` hedefi AÇIK |
-| `find_quick_wins` | **KISMEN DÜZELTİLDİ** — 3 bulgu + 1 yarı kapandı | #217 (B-1a, B-2, B-4, B-5'in noktalama yarısı) | **bekliyor** | B-1b **İMZA** (sıralama politikası) · B-3 AÇIK · B-5'in `days` yarısı AÇIK |
+| `find_quick_wins` | **KISMEN DÜZELTİLDİ** — 3 bulgu + 1 yarı kapandı | #217 (B-1a, B-2, B-4, B-5'in noktalama yarısı) | **✔ B-1a + R-7.11 canlıda (`bbc259d`)** — şef turu 2026-09-03, Δ −10, dentnotion; ayrıntı en alttaki ek | B-1b **İMZA** (sıralama politikası) · B-3 AÇIK · B-5'in `days` yarısı AÇIK |
 | `detect_cannibalization` | **KISMEN DÜZELTİLDİ** — en zararlı vaka kapandı, **sınıf kapanmadı** | #217 (B-1'in kök URL ekseni, B-5'in noktalama yarısı) | **bekliyor** | **hub/liste ekseni AÇIK** · B-2 · B-3 · B-4 AÇIK · B-5'in `limit`/uzunluk yarısı AÇIK · `goals/` hedefi AÇIK |
 | `analyze_content_decay` | **DÜZELTİLDİ** — iki P1 de kapandı | #217 (B-1, B-2, B-5'in noktalama yarısı) | **bekliyor** | takvimin **BAKIM yolu AÇIK** · B-3 · B-4 AÇIK · B-5'in eşik yarısı AÇIK |
 
@@ -149,3 +155,14 @@ diye sayılmamıştır.
 - `detect_cannibalization`: kök URL artık hiçbir satırda "canonicalize or merge" tarafında değil; `Your home page … is left out of that decision` cümlesi basıldı (B-1 kök ekseni ✔). `/doktorlarimiz/` hub sayfası hâlâ fold edilecek taraf — bilinen AÇIK yarı.
 - `find_quick_wins`: bu turda canlıda koşulmadı (10 kredi; B-1a/B-4 birim+docs kanıtıyla kapalı).
 - Defter: üç satır da `project: dentnotion.com` kapsamlı (H-1 ailesi canlıda ikinci kez ✔).
+
+## Canlı doğrulama eki (şef, 2026-09-03, deploy `bbc259d`, Δ −10, `find_quick_wins` · dentnotion)
+
+- **B-1a ✔ ve R-7.11/B-2 ✔ canlıda:** tavsiye cümlesi artık bastığı CTR'ı okuyor (*"It is being shown
+  and not clicked — CTR 0.0% against 0.1% across this shortlist — so look at the results page … an AI
+  Overview, a featured snippet or ads can take the click"*) ve ortalama-pozisyon şerhi basıldı
+  (*"Position is Google's AVERAGE over the analyzed window … not where it sat on any single day"*).
+- **B-3 hâlâ AÇIK ve canlıda doğrulandı:** `…and 868 more cleared the bands.` satırı değişmedi —
+  başlıktaki sayfa sayısı ile kalan sayı hâlâ iki farklı birimi sayıyor.
+- **Yeni P2 (B-6):** `1 clicks` — tekil/çoğul hatası; kardeşi `my_pages` A-4 (dilim 4). Ayrıntı ve
+  bulgu satırı `find_quick_wins.md`'de; `durum` sütunu ölçüm kaydı olduğu için BOŞ bırakıldı.

@@ -3,6 +3,10 @@ import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import {
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
+import {
   resolveDefaultPort,
   type KeywordOverviewRow,
   type KeywordResearchPort,
@@ -120,7 +124,8 @@ const DESCRIPTION =
   "search-volume trend for up to 100 keywords. Synchronous — returns a table immediately. " +
   `Costs ${TOOL_COSTS.research_keywords} credits. Needs a paid ` +
   "credit balance: it is not available on trial credits. If live keyword data is unavailable " +
-  "on this deployment, the tool says so and charges nothing.";
+  "on this deployment, the tool says so and charges nothing. " +
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE;
 
 /** Group digits with commas without depending on ICU/locale data (deterministic). */
 function thousands(value: number): string {
@@ -320,8 +325,22 @@ export function formatKeywordOverview(
   return (
     `Search volume for ${lines.length} keyword${lines.length === 1 ? "" : "s"} ` +
     `(language ${input.language_code}, location ${input.location_code}), ` +
-    `${thousands(totalVolume)} total monthly searches${missingNote}:\n${lines.join("\n")}` +
-    (freshness === null ? "" : `\n${freshness}`)
+    // RK-2. THE ONLY NUMBER ON THIS PAGE NOBODY MEASURED. Every addend is a figure Google rounded
+    // (R-8.9 — SEARCH_VOLUME_NOTE below says so), and R-8.9 states in as many words that rounded
+    // volumes do not add up; so this sum is the product's own arithmetic over vendor estimates,
+    // not something DataForSEO reported. It is KEPT — an order of magnitude readers already use —
+    // and it now says what it is instead of standing beside per-row vendor figures wearing the
+    // same confident voice. No error bar is offered with it: the rounding granularity Google
+    // applies is not published, so any "±" here would be a second invented number (NEVER #7).
+    `≈${thousands(totalVolume)} total monthly searches (approximate — a sum of rounded ` +
+    `figures)${missingNote}:\n${lines.join("\n")}` +
+    (freshness === null ? "" : `\n${freshness}`) +
+    // R-8.9, from the constant four tools share (format/search-volume.ts). It goes at the END,
+    // beside the freshness line, because it is a caveat about numbers the reader has just read —
+    // and it is the SAME string on all four surfaces so that one figure cannot be explained four
+    // ways. This tool prints no BAND note: its rows are in the caller's own keyword order, so a
+    // sentence about ties in a sorted list would describe an ordering it never makes.
+    `\n${SEARCH_VOLUME_NOTE}`
   );
 }
 

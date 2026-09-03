@@ -37,6 +37,69 @@ export interface StoredMeasurement {
   readonly vendorReportedTimeField: string | null;
   readonly vendorReportedTimeValue: string | null;
   readonly fetchedAt: string;
+  /**
+   * What the row's `report` jsonb held, or NULL when nothing readable was stored in it. The
+   * distinction carries the whole finding: `null` means NOT RECORDED, and never "there was no URL
+   * and no feature on that page".
+   */
+  readonly report: StoredReportSummary | null;
+}
+
+/**
+ * The two facts `serp_snapshot` bought from DataForSEO, wrote into `report`, and that nothing in
+ * the product could read back (S-1): the ranking page's URL, and the vendor's own list of what
+ * else was on that SERP.
+ */
+export interface StoredReportSummary {
+  /** The ranking page's URL, or NULL when the vendor sent that placement without one. */
+  readonly rankedUrl: string | null;
+  /** DataForSEO's page-level `item_types`, verbatim. Nothing is recognised, so nothing drops. */
+  readonly itemTypes: readonly string[];
+}
+
+/**
+ * READ ONE ROW'S `report` JSONB — defensively, because a jsonb column is not a promise about its
+ * shape. Everything in there came from a vendor payload, and the shape this reader knows is
+ * `serp-snapshot-store.ts`'s `StoredMeasurementReport` as it stood when the row was written.
+ *
+ * ANY SHAPE IT CANNOT READ BECOMES `null`, NEVER A THROW. This read runs INSIDE `withCredits`,
+ * after the reserve: a throw would release the reserve and refuse an answer the tenant's stored
+ * measurements can perfectly well supply, over one malformed document. "Not recorded" is the
+ * honest degradation, and the formatter prints it in those words.
+ *
+ * THE URL IS THE ONE WHOSE RANKS THE COLUMNS LIFTED, matched on `best_rank_group` and, when the
+ * vendor withheld the organic scale, on `best_rank_absolute` — the same order `bestPlacement`
+ * chose them in on the way out. Anything else would print a URL beside a rank it does not belong
+ * to: the report's placement list is the vendor's order, not a ranking, and its first entry is
+ * not the row's best.
+ */
+export function readStoredReport(
+  value: unknown,
+  bestRankGroup: number | null,
+  bestRankAbsolute: number | null,
+): StoredReportSummary | null {
+  if (!isRecord(value)) return null;
+  const page = value.vendor_page;
+  // THE GUARD IS ON `vendor_page`, NOT ON THE PLACEMENTS, and that is the honest boundary. A
+  // report without it is a shape this reader does not know, and returning an EMPTY feature list
+  // for one would print "SERP features besides organic: none reported" — a claim about a page
+  // whose features were never written down. Not recorded is not the same as nothing there.
+  if (!isRecord(page) || !Array.isArray(page.item_types)) return null;
+  const itemTypes = page.item_types.filter((type): type is string => typeof type === "string");
+  const placements = Array.isArray(value.placements) ? value.placements.filter(isRecord) : [];
+  const match =
+    bestRankGroup !== null
+      ? placements.find((placement) => placement.rank_group === bestRankGroup)
+      : bestRankAbsolute !== null
+        ? placements.find((placement) => placement.rank_absolute === bestRankAbsolute)
+        : undefined;
+  const url = match?.url;
+  return { rankedUrl: typeof url === "string" ? url : null, itemTypes };
+}
+
+/** True for a plain JSON object — an array and `null` are both `typeof "object"` in JS. */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /** What the caller narrowed the read to. `targetDomain` is the subject; the rest are optional. */
@@ -69,9 +132,17 @@ export type LoadMeasurementsFn = (
  * does not exist on the table is a TYPE ERROR here — while a `const COLUMNS = "a, " + "b"` widens
  * to `string`, hands back `GenericStringError`, and forces the cast that would have made a typo
  * invisible until runtime.
+ *
+ * `report` IS THE ONE NON-SCALAR IN THE LIST, and it is projected on purpose (S-1).
+ * `serp_snapshot` writes the ranking URL and DataForSEO's page-level `item_types` into it; this
+ * read charges 10 credits and, without the column, could say neither which page ranked nor
+ * whether an AI Overview was on it — data that was measured, stored and PAID FOR, and reachable
+ * from nowhere in the product. The web Rankings page still skips `report` deliberately
+ * (`ranking-history.ts`, "SCALARS ONLY"): it paints a long history in one query, while this read
+ * is bounded at 200 rows by its own schema and does not carry that reason.
  */
 const COLUMNS =
-  "keyword, target_domain, location_name, language_code, device, search_engine, depth_requested, domain_match_rule, status, best_rank_group, best_rank_absolute, organic_items_examined, not_measured_reason, vendor_reported_time_field, vendor_reported_time_value, fetched_at" as const;
+  "keyword, target_domain, location_name, language_code, device, search_engine, depth_requested, domain_match_rule, status, best_rank_group, best_rank_absolute, organic_items_examined, not_measured_reason, vendor_reported_time_field, vendor_reported_time_value, fetched_at, report" as const;
 
 /**
  * Apply the caller's narrowing. The tenant filter and the subject are NOT optional and are applied
@@ -140,5 +211,6 @@ export const loadStoredMeasurements: LoadMeasurementsFn = async (userId, filter,
     vendorReportedTimeField: row.vendor_reported_time_field,
     vendorReportedTimeValue: row.vendor_reported_time_value,
     fetchedAt: row.fetched_at,
+    report: readStoredReport(row.report, row.best_rank_group, row.best_rank_absolute),
   }));
 };

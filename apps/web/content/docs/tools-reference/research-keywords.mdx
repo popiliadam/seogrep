@@ -11,7 +11,7 @@ description: "Look up Google search volume, CPC, competition, keyword difficulty
 
 Given a list of keywords (plus an optional language and location), it returns one row per keyword with:
 
-- **Search volume** — average monthly Google searches.
+- **Search volume** — average monthly Google searches. About these search volumes: they are Google Keyword Planner figures, passed through from DataForSEO unchanged. Each one is a 12-MONTH AVERAGE for the keyword AND ITS CLOSE VARIANTS, and Google ROUNDS it — so a volume here is not a count of exact-match searches in the month just gone, two keywords can share a figure only because both were rounded onto it, and volumes added up across rows or across locations will not come out exact.
 - **CPC** — the average cost-per-click advertisers pay.
 - **Competition** — the advertiser competition band (`HIGH` / `MEDIUM` / `LOW`).
 - **Keyword difficulty** — how hard the keyword is to rank for, on a 0–100 scale.

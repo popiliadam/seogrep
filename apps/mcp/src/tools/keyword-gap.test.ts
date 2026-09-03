@@ -9,6 +9,12 @@ import {
 } from "./keyword-gap.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
+import {
+  SEARCH_VOLUME_BAND_NOTE,
+  SEARCH_VOLUME_DESCRIPTION_CLAUSE,
+  SEARCH_VOLUME_NOTE,
+} from "../format/search-volume.ts";
 import gapFixture from "../dfs/fixtures/domain-intersection.json";
 
 /**
@@ -381,5 +387,63 @@ describe("F3 — the keyword_gap limit description matches what the header does"
     expect(tool.description).toContain(`${TOOL_COSTS.keyword_gap} credits`);
     // The row argument must not grow a price claim of its own.
     expect(limit).not.toMatch(/credits?/i);
+  });
+});
+
+/**
+ * R-8.9 — the shared search-volume note. `keyword_gap` ORDERS its list by this figure, so it
+ * prints the band half as well: the rounding is what makes "highest search volume first" group
+ * rows instead of ranking them.
+ */
+describe("keyword_gap — the shared search-volume note (R-8.9)", () => {
+  it("prints the shared note under a populated gap list", () => {
+    const text = formatKeywordGap(gap([FULL_ROW], 1841), WHERE);
+    expect(text).toContain(SEARCH_VOLUME_NOTE);
+    expect(text).toMatch(/close variants/i);
+    expect(text).toMatch(/12[- ]month/i);
+  });
+
+  it("prints the band note, because the list is sorted by that figure", () => {
+    const text = formatKeywordGap(gap([FULL_ROW], 1841), WHERE);
+    expect(text).toContain(SEARCH_VOLUME_BAND_NOTE);
+    expect(text).toMatch(/band/i);
+  });
+
+  it("carries the clause in the tool description too", () => {
+    const description = makeKeywordGapTool().description;
+    expect(description).toContain(SEARCH_VOLUME_DESCRIPTION_CLAUSE);
+    expect(description).toMatch(/close variants/i);
+  });
+});
+
+/**
+ * G-3 — the same default-locale warning, from the same shared sentence.
+ *
+ * A resolved `project_id` does NOT derive the locale: a Turkish project's gap is measured in the
+ * United States, in English, unless the caller overrides it — paid, and silently the wrong window.
+ * The default is NOT changed here (that is a behaviour-and-price decision); it is only named.
+ */
+describe("keyword_gap — the default-locale warning (G-3)", () => {
+  const trGap = (): KeywordGapResult => ({ ...gap([FULL_ROW], 1841), target: "adstark.com.tr" });
+
+  it("warns when a country-code TLD was looked up on the default locale", () => {
+    const text = formatKeywordGap(trGap(), WHERE);
+    expect(text).toContain(defaultLocaleWarning("adstark.com.tr", WHERE));
+    expect(text).toMatch(/\.tr domain/);
+  });
+
+  it("says nothing on a .com", () => {
+    expect(formatKeywordGap(gap([FULL_ROW], 1841), WHERE)).not.toMatch(/country-code TLD/);
+  });
+
+  it("says nothing once the caller chose a locale", () => {
+    const text = formatKeywordGap(trGap(), { language_code: "tr", location_code: 2792 });
+    expect(text).not.toMatch(/country-code TLD/);
+  });
+
+  /** An empty gap on the wrong locale is exactly the answer the warning exists for. */
+  it("warns on the 'no gap found' answer too", () => {
+    const text = formatKeywordGap({ ...trGap(), rows: [], total_count: 0 }, WHERE);
+    expect(text).toMatch(/country-code TLD/);
   });
 });
