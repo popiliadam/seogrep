@@ -413,12 +413,15 @@ describe("createLiveKeywordGapClient (fake transport — never real HTTP)", () =
 
   /**
    * The success path must not have grown a SECOND settlement out of this. The in-memory ledger
-   * refuses a second settle of the same row and settleSpend swallows that, so the row count — not
-   * an exception — is the evidence.
+   * refuses a second settle of the same row and settleSpend SWALLOWS that refusal, so neither an
+   * exception nor the row count can be the evidence — the settled VALUE is. Turning the catch into
+   * a `finally` settles at the ESTIMATE first and the real cost is then refused and swallowed, so
+   * the row survives carrying the wrong number; `toBeGreaterThan(0)` could not tell those apart.
    */
-  it("still settles a healthy call exactly once", async () => {
+  it("still settles a healthy call exactly once, at the vendor's real cost", async () => {
     await liveClient(fixtureTransport(), ledger).fetchKeywordGap(QUERY);
     expect(ledger.rows()).toHaveLength(1);
-    expect(ledger.rows()[0]?.actualUsd).toBeGreaterThan(0);
+    expect(ledger.rows()[0]?.actualUsd).toBe(FIXTURE_COST);
+    expect(FIXTURE_COST).not.toBeCloseTo(estimateKeywordGapUsd(QUERY.limit), 6);
   });
 });

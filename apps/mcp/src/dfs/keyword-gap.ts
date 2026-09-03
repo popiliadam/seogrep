@@ -33,8 +33,9 @@ import { defaultDfsTransport, type DfsTransport } from "./client.ts";
  * Budget accounting follows the competitors.ts shape, minus the fan-out: ONE reservation sized to
  * the request that is about to run (estimateKeywordGapUsd, a function of `limit` because the
  * vendor bills per RETURNED ROW), then the response's REAL cost settled right after it returns.
- * A failure leaves the reservation open at its full estimate, which is never less than the spend
- * that really happened.
+ * A failure SETTLES the reservation at its full estimate, which is never less than the spend that
+ * really happened and is the number an open row already counted as — see createLiveKeywordGapClient
+ * for why closing it there leaves the $3 cap untouched (DK-3).
  */
 
 /** The DataForSEO Labs LIVE endpoint behind one keyword gap. */
