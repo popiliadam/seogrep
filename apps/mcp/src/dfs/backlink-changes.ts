@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -477,9 +483,15 @@ export interface LiveBacklinkChangesOptions {
  * to BOTH requests at the requested window; (2) the new/lost request; (3) the summary request;
  * (4) ONE settlement with the two real costs summed. A response that omits `cost` settles at THAT
  * request's own estimate rather than at $0.00 — the same per-request rule backlink-details.ts
- * follows. A failure at (2) means (3) never runs and no money is spent on it; a failure at (3)
- * leaves the reservation open at its full estimate, which is never less than the spend that
- * really happened.
+ * follows. A failure at (2) means (3) never runs and no money is spent on it.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3, 2026-09-04). This used
+ * to say a failure at (3) "leaves the reservation open at its full estimate". The money argument
+ * was sound and is kept — the row is SETTLED at that WHOLE-CALL estimate, never at what the
+ * request that already succeeded cost, and never less than the spend that really happened. It is
+ * the number an open row already counted as (0014's `coalesce(actual_usd, estimated_usd)`), so
+ * the $3 cap sees the identical figure either way; what changes is that `status=open` goes back
+ * to meaning "in flight". See settleFailedSpend.
  */
 export function createLiveBacklinkChangesClient(
   opts: LiveBacklinkChangesOptions,
@@ -521,14 +533,34 @@ export function createLiveBacklinkChangesClient(
         DFS_BACKLINKS_TIMESERIES_NEW_LOST_ENDPOINT,
         ledger,
       );
-      const rawChanges = await post(DFS_BACKLINKS_TIMESERIES_NEW_LOST_ENDPOINT, window);
-      const changes = parseBacklinkChangesResponse(rawChanges);
-      // Only the SUMMARY endpoint documents rank_scale, so only it is sent one.
-      const rawProfile = await post(DFS_BACKLINKS_TIMESERIES_SUMMARY_ENDPOINT, {
-        ...window,
-        rank_scale: RANK_SCALE,
-      });
-      const profile = parseBacklinkProfileResponse(rawProfile);
+      // The try covers BOTH REQUESTS AND BOTH PARSES, which is the whole span between the one
+      // reservation above and the settlement below — a rejected task, a moved response shape and
+      // a death on either request all throw in here, and all of them used to walk out past the
+      // settlement leaving the row open. The results are `let` above only so the settlement and
+      // return below can still see them; the requests themselves are untouched.
+      let rawChanges: unknown;
+      let changes: ReturnType<typeof parseBacklinkChangesResponse>;
+      let rawProfile: unknown;
+      let profile: ReturnType<typeof parseBacklinkProfileResponse>;
+      try {
+        rawChanges = await post(DFS_BACKLINKS_TIMESERIES_NEW_LOST_ENDPOINT, window);
+        changes = parseBacklinkChangesResponse(rawChanges);
+        // Only the SUMMARY endpoint documents rank_scale, so only it is sent one.
+        rawProfile = await post(DFS_BACKLINKS_TIMESERIES_SUMMARY_ENDPOINT, {
+          ...window,
+          rank_scale: RANK_SCALE,
+        });
+        profile = parseBacklinkProfileResponse(rawProfile);
+      } catch (error) {
+        // Closes the ONE reservation at its own WHOLE-CALL estimate — NEVER at what the request
+        // that already succeeded cost, which would hand the difference to the next caller. It
+        // never throws, so the ORIGINAL error is still the one the caller sees. Here rather than
+        // in a `finally` on purpose: a `finally` would also run after the success settlement
+        // below and turn every healthy call into a doomed second settle, which settleSpend
+        // swallows — leaving the row alive carrying the wrong number.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
+      }
 
       // PER REQUEST, not per pair: a response the vendor declined to price settles at ITS OWN
       // share of the estimate — never at $0.00. The pair-level `spent > 0 ? spent : estimate` this

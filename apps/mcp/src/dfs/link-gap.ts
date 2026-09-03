@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -307,9 +313,15 @@ export interface LiveLinkGapOptions {
 
 /**
  * The real (paid) link-gap client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized to the
- * requested row cap; (2) ONE request; (3) ONE settlement with the real cost. A failure at (2)
- * leaves the reservation open at its full estimate, which is never less than the spend that
- * really happened.
+ * requested row cap; (2) ONE request; (3) ONE settlement with the real cost.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3, 2026-09-04). This used
+ * to say a failure at (2) "leaves the reservation open at its full estimate". The money argument
+ * was sound and is kept — the row is SETTLED at that full estimate, which is what an open row
+ * already counts as (0014's `coalesce(actual_usd, estimated_usd)`), so the $3 cap sees the
+ * identical number either way and never less than the spend that really happened. What changes is
+ * that `status=open` goes back to meaning "in flight" rather than also meaning "died here in
+ * July". See settleFailedSpend.
  */
 export function createLiveLinkGapClient(opts: LiveLinkGapOptions): LinkGapPort {
   const transport = opts.transport ?? defaultDfsTransport;
@@ -324,30 +336,45 @@ export function createLiveLinkGapClient(opts: LiveLinkGapOptions): LinkGapPort {
         DFS_BACKLINKS_DOMAIN_INTERSECTION_ENDPOINT,
         ledger,
       );
-      const response = await transport(DFS_BACKLINKS_DOMAIN_INTERSECTION_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: authHeader, "Content-Type": "application/json" },
-        body: JSON.stringify([
-          {
-            // The RIVAL is the target and the caller's own domain is excluded: swapping these two
-            // would answer the opposite question (who links to you and not to them) at the same
-            // price. `targets` is an OBJECT keyed by position, which is the vendor's own shape.
-            targets: { "1": query.competitor },
-            exclude_targets: [query.target],
-            backlinks_status_type: BACKLINKS_STATUS_TYPE,
-            rank_scale: RANK_SCALE,
-            limit: query.limit,
-            order_by: ORDER_BY_RANK_DESC,
-          },
-        ]),
-      });
-      if (!response.ok) {
-        throw new Error(
-          `DataForSEO request failed: HTTP ${response.status} (${DFS_BACKLINKS_DOMAIN_INTERSECTION_ENDPOINT})`,
-        );
+      // The try covers the REQUEST AND THE PARSE, which is the whole span between the reservation
+      // and its settlement — the vendor rejecting the task and our own reader refusing a moved
+      // shape both throw in here, and both used to walk out past the settlement.
+      let raw: unknown;
+      let parsed: ReturnType<typeof parseLinkGapResponse>;
+      try {
+        const response = await transport(DFS_BACKLINKS_DOMAIN_INTERSECTION_ENDPOINT, {
+          method: "POST",
+          headers: { Authorization: authHeader, "Content-Type": "application/json" },
+          body: JSON.stringify([
+            {
+              // The RIVAL is the target and the caller's own domain is excluded: swapping these
+              // two would answer the opposite question (who links to you and not to them) at the
+              // same price. `targets` is an OBJECT keyed by position — the vendor's own shape.
+              targets: { "1": query.competitor },
+              exclude_targets: [query.target],
+              backlinks_status_type: BACKLINKS_STATUS_TYPE,
+              rank_scale: RANK_SCALE,
+              limit: query.limit,
+              order_by: ORDER_BY_RANK_DESC,
+            },
+          ]),
+        });
+        if (!response.ok) {
+          throw new Error(
+            `DataForSEO request failed: HTTP ${response.status} (${DFS_BACKLINKS_DOMAIN_INTERSECTION_ENDPOINT})`,
+          );
+        }
+        raw = await response.json();
+        parsed = parseLinkGapResponse(raw);
+      } catch (error) {
+        // Closes the row without moving today's total, and never throws, so the ORIGINAL error is
+        // still the one the caller sees. Here rather than in a `finally` on purpose: a `finally`
+        // would also run after the success settlement below and turn every healthy call into a
+        // doomed second settle — which settleSpend swallows, leaving the row alive carrying the
+        // wrong number.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
       }
-      const raw: unknown = await response.json();
-      const parsed = parseLinkGapResponse(raw);
       await settleSpend(
         reservation,
         extractLinkGapCostUsd(raw) ?? estimateLinkGapUsd(query.limit),

@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import { DFS_BACKLINKS_REQUEST_USD, DFS_BACKLINKS_ROW_USD } from "./backlink-changes.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, type DfsTransport } from "./client.ts";
 
 /**
@@ -549,6 +555,14 @@ export interface LiveBacklinkDetailsOptions {
  * A response that omits `cost` settles at THAT request's own estimate rather than at $0.00 — a
  * request whose price the vendor did not report still happened, and counting it as free is the
  * one direction the budget gate must never err in.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONE (DK-3, 2026-09-04). A failure
+ * at (2) or (3) closes the ONE reservation at the WHOLE-CALL estimate — not at what the request
+ * that already succeeded really cost, which would report a two-request operation at one request's
+ * price. That estimate is what an open row already counted as (0014's
+ * `coalesce(actual_usd, estimated_usd)`), so the $3 cap sees the identical number either way and
+ * never less than the partial spend that really happened; what changes is that `status=open` goes
+ * back to meaning "in flight". See settleFailedSpend.
  */
 export function createLiveBacklinkDetailsClient(
   opts: LiveBacklinkDetailsOptions,
@@ -586,27 +600,47 @@ export function createLiveBacklinkDetailsClient(
         ledger,
       );
 
-      const rawLinks = await post(DFS_BACKLINKS_LIST_ENDPOINT, {
-        target: query.target,
-        limit: linkBounds.limit,
-        offset: linkBounds.offset,
-        mode: BACKLINKS_MODE,
-        backlinks_status_type: BACKLINKS_STATUS_TYPE,
-        include_subdomains: INCLUDE_SUBDOMAINS,
-        rank_scale: RANK_SCALE,
-        order_by: ORDER_BY_RANK_DESC,
-      });
-      const links = parseBacklinkRowsResponse(rawLinks, linkBounds);
+      // The try covers BOTH REQUESTS AND BOTH PARSES, which is the whole span between the one
+      // reservation above and the settlement below — a rejected task, a moved response shape and
+      // a death on either request all throw in here, and all of them used to walk out past the
+      // settlement leaving the row open. The results are `let` above only so the settlement and
+      // return below can still see them; the requests themselves are untouched.
+      let rawLinks: unknown;
+      let links: ReturnType<typeof parseBacklinkRowsResponse>;
+      let rawPages: unknown;
+      let targetPages: ReturnType<typeof parseTargetPagesResponse>;
+      try {
+        rawLinks = await post(DFS_BACKLINKS_LIST_ENDPOINT, {
+          target: query.target,
+          limit: linkBounds.limit,
+          offset: linkBounds.offset,
+          mode: BACKLINKS_MODE,
+          backlinks_status_type: BACKLINKS_STATUS_TYPE,
+          include_subdomains: INCLUDE_SUBDOMAINS,
+          rank_scale: RANK_SCALE,
+          order_by: ORDER_BY_RANK_DESC,
+        });
+        links = parseBacklinkRowsResponse(rawLinks, linkBounds);
 
-      const rawPages = await post(DFS_BACKLINKS_DOMAIN_PAGES_SUMMARY_ENDPOINT, {
-        target: query.target,
-        limit: pageBounds.limit,
-        backlinks_status_type: BACKLINKS_STATUS_TYPE,
-        include_subdomains: INCLUDE_SUBDOMAINS,
-        rank_scale: RANK_SCALE,
-        order_by: ORDER_BY_BACKLINKS_DESC,
-      });
-      const targetPages = parseTargetPagesResponse(rawPages, pageBounds);
+        rawPages = await post(DFS_BACKLINKS_DOMAIN_PAGES_SUMMARY_ENDPOINT, {
+          target: query.target,
+          limit: pageBounds.limit,
+          backlinks_status_type: BACKLINKS_STATUS_TYPE,
+          include_subdomains: INCLUDE_SUBDOMAINS,
+          rank_scale: RANK_SCALE,
+          order_by: ORDER_BY_BACKLINKS_DESC,
+        });
+        targetPages = parseTargetPagesResponse(rawPages, pageBounds);
+      } catch (error) {
+        // Closes the ONE reservation at its own estimate — NEVER at what the request that already
+        // succeeded cost, which would hand the difference to the next caller. It never throws, so
+        // the ORIGINAL error is still the one the caller sees. Here rather than in a `finally` on
+        // purpose: a `finally` would also run after the success settlement below and turn every
+        // healthy call into a doomed second settle, which settleSpend swallows — leaving the row
+        // alive carrying the wrong number.
+        await settleFailedSpend(reservation, ledger);
+        throw error;
+      }
 
       const spent =
         (extractBacklinkDetailsCostUsd(rawLinks) ?? estimateRequestUsd(linkBounds.limit)) +
