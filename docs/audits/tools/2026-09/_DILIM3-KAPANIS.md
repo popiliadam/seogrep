@@ -141,3 +141,11 @@ diye sayılmamıştır.
 - adstark.com.tr'de ön koşul reddi doğru cümleyle döndü ve eksik adımı ölçüm olarak adlandırdı
   (`serp_snapshot`), `track_keywords`'ü ayrı ve ücretsiz adım olarak bıraktı (F-3 ✔).
 - **#217'nin canlı yarısı bu eke DAHİL DEĞİLDİR** — merge sonrası ayrı bir tur gerekir.
+
+## Canlı doğrulama eki (şef, 2026-09-03, deploy `bbc259d`, Δ −25, dentnotion)
+
+- `pull_gsc_data`: **Current window 2026-06-03..2026-08-31: 21342 rows · Previous window 2026-03-05..2026-06-02: 29603 rows** — eski 15.000 tavanı aşıldı, sayfalama canlı (B-2 ✔); "truncated" cümlesi basılmadı → bayt bütçesine değmedi (bu mülkte bağlayan sınır yok).
+- `analyze_content_decay`: not listenin başında — `Note: the period being compared spans Google's March 2026 spam update (24 Mar), March 2026 core update (27 Mar), May 2026 core update (21 May), June 2026 spam update (24 Jun), August 2026 spam update …` (B-1 ✔); satır `140 → 90 clicks (lost 50, down 35.7%); 71,167 → 33,114 impressions, position 7.6 → 6.7` (B-2 ✔); R-7.11 cümlesi var.
+- `detect_cannibalization`: kök URL artık hiçbir satırda "canonicalize or merge" tarafında değil; `Your home page … is left out of that decision` cümlesi basıldı (B-1 kök ekseni ✔). `/doktorlarimiz/` hub sayfası hâlâ fold edilecek taraf — bilinen AÇIK yarı.
+- `find_quick_wins`: bu turda canlıda koşulmadı (10 kredi; B-1a/B-4 birim+docs kanıtıyla kapalı).
+- Defter: üç satır da `project: dentnotion.com` kapsamlı (H-1 ailesi canlıda ikinci kez ✔).
