@@ -145,13 +145,15 @@ describe("renderWindowCaption — the window and the whole set are never the sam
   });
 
   /**
-   * CONTRACT CHANGED 2026-09-04 (finding BD-4, MEASURED on a paid call). The pin that stood here
+   * CONTRACT CHANGED 2026-09-04 (finding BD-8, MEASURED on a paid call). The pin that stood here
    * asserted that an EMPTY window carrying `total_count: 0` printed "DataForSEO counts 0 backlinks
    * for this target in total" — and on 2026-09-03 a 35-credit lookup printed exactly that for
    * dentnotion.com at offset 19,000 while the SAME reply listed pages with 175, 18 and 17
    * backlinks and `analyze_backlinks` measured 242 backlinks / 139 referring domains for the same
-   * subject. The vendor answers an out-of-range window with no rows AND `total_count: 0`, so that
-   * 0 describes the window, not the target. The old assertion pinned the defect (signed lesson 11).
+   * subject. That pairing was measured ONCE (dentnotion, 2026-09-03); the vendor's docs define
+   * `total_count` as the whole matching set and say nothing about offset, so the caption states the
+   * two vendor facts and declines to reuse the figure as a whole-profile count rather than
+   * explaining the 0 (signed lesson 16). The old assertion pinned the defect (signed lesson 11).
    *
    * What survives is the rule it was defending: a vendor zero is an ANSWER, never a silence. It is
    * still printed, still named as the vendor's own `total_count`, and still never rendered as
@@ -161,7 +163,7 @@ describe("renderWindowCaption — the window and the whole set are never the sam
     const caption = renderWindowCaption("Individual backlinks", "backlink", window_([], 0, { offset: 19_000, limit: 5 }));
     expect(caption).toContain("0 backlinks in this window (offset 19,000, limit 5)");
     expect(caption).toContain("reported total_count 0");
-    expect(caption).toContain("not the target's backlinks");
+    expect(caption).toContain("not used here as the target's whole-profile count");
     expect(caption).not.toMatch(/counts 0 backlinks for this target in total/);
     expect(caption).not.toMatch(/did not say/);
   });
@@ -417,7 +419,7 @@ describe("formatBacklinkDetails", () => {
   });
 
   /**
-   * THE LIVE SHAPE (finding BD-4): the exact reply a 35-credit call produced on 2026-09-03 —
+   * THE LIVE SHAPE (finding BD-8): the exact reply a 35-credit call produced on 2026-09-03 —
    * an empty link window at offset 19,000 whose `total_count` came back 0, printed beside a page
    * list showing 1,259,787 backlinks. The old text told the customer the vendor counted ZERO
    * backlinks for the target three lines above rows proving otherwise.
@@ -428,7 +430,7 @@ describe("formatBacklinkDetails", () => {
     );
     expect(text).not.toMatch(/counts 0 backlinks for this target in total/);
     expect(text).toContain("reported total_count 0");
-    expect(text).toContain("not the target's backlinks");
+    expect(text).toContain("not used here as the target's whole-profile count");
     expect(text).toContain(EMPTY_LINK_WINDOW_NOTE);
     expect(text).toContain("1,259,787 backlinks");
   });
