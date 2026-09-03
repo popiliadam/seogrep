@@ -1119,7 +1119,12 @@ export function makeDiscoverKeywordsTool(deps: DiscoverKeywordsDeps = {}): Regis
       }
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch -> commit
       // as one chain. The vendor request failing throws, so withCredits releases.
-      return withCredits({ userId: ctx.userId }, { tool: "discover_keywords" }, async () => {
+      // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the
+      // ownership-gated project resolved above. charge:"handler" settles its own credits, so
+      // nothing upstream can supply this; undefined is a REAL answer ("no project scope"), never
+      // a gap (credits/guard.ts) — and it is the honest one for the subject that names no domain.
+      const meta = { tool: "discover_keywords", projectId: project?.id } as const;
+      return withCredits({ userId: ctx.userId }, meta, async () => {
         const result = await port.fetchDiscoverKeywords(query);
         const text = formatDiscoverKeywords(result, input, project);
         // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, and the write is NOT guarded

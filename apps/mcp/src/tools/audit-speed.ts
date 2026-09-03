@@ -362,6 +362,11 @@ export function makeAuditSpeedTool(deps: AuditSpeedDeps = {}): RegisteredTool {
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> measure ->
       // commit as one chain. Any Lighthouse run failing throws, so withCredits releases and a
       // partial table is never billed.
+      //
+      // NO `projectId`, DELIBERATELY (migration 0033). This tool takes page URLs and nothing else,
+      // so it has no project to name: "no project scope" is the TRUE answer here, not a missing
+      // one, and an invented scope would be a number somebody adds up (credits/guard.ts). Pinned
+      // by audit-speed-charge.pin.test.ts and by handler-charge-scope-coverage.pin.test.ts.
       return withCredits({ userId: ctx.userId }, { tool: "audit_speed" }, async () => {
         const pages = await port.fetchPageSpeed(urls.urls);
         return textResult(formatSpeedAudit(pages));
