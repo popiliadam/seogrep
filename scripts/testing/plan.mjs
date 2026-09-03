@@ -123,12 +123,20 @@ export const EXCLUDED = Object.freeze({
 
   // ---- Paid. Each line carries the signed per-call price, because the reason a cell is not
   // bought is the price times the site count, and that number should not need looking up.
-  // THE BUDGET-SIGNATURE HALF OF THESE FOUR LINES IS GONE, and saying so is the point: the
-  // operator signed the credit budget on 2026-09-02, and all four ran PAID on 2026-09-03 during
-  // the tool round (records under docs/audits/tools/2026-09/). A reason that has stopped being
-  // true is worse than no reason — nobody re-reads it, and it keeps a cell excluded for a
-  // constraint that was lifted (signed lesson 16). What is left is the reason that is still real,
-  // and in every case it is a PER-SITE INPUT the matrix does not carry, not a price.
+  // THE BUDGET-SIGNATURE HALF OF THESE LINES IS GONE, and saying so is the point: the operator
+  // signed the credit budget on 2026-09-02, and every tool named below that still carried the
+  // phrase has since run PAID during the tool round (records under docs/audits/tools/2026-09/).
+  // A reason that has stopped being true is worse than no reason — nobody re-reads it, and it
+  // keeps a cell excluded for a constraint that was lifted (signed lesson 16). What is left is
+  // the reason that is still real: usually a PER-SITE INPUT the matrix does not carry, and once
+  // (backlink_changes) the price alone.
+  //
+  // THIS BLOCK WAS CORRECTED TWICE, and the second time is the lesson. The 2026-09-03 pass fixed
+  // FOUR lines and wrote "these four lines" here; the stale sentence was still standing in FIVE
+  // MORE, immediately below them (link_gap, backlink_changes, backlink_details,
+  // disavow_candidates, audit_speed). The class had not closed, it had MOVED POSITION — signed
+  // lesson 14, third occurrence. So the wording above no longer counts lines: a fixed count is
+  // what let the second half of the class hide behind the first.
   discover_keywords:
     "paid, 40 credits/call and a DataForSEO Labs request. The budget signature arrived 2026-09-02 " +
     "and the tool ran paid on 2026-09-03; what still blocks a sweep cell is the LOCALE — `ideas` " +
@@ -146,11 +154,32 @@ export const EXCLUDED = Object.freeze({
     "matrix does not yet carry. That round showed a competitor can be chosen measurably (sector " +
     "+ language + a live HTTP check), so this is a missing matrix column and not an impossibility: " +
     "add `competitor` to SITES and the cell becomes includable.",
-  link_gap: "paid, 45 credits/call. Same missing per-site competitor input as keyword_gap.",
-  backlink_changes: "paid, 35 credits/call against the DataForSEO backlinks API. Needs a budget signature.",
-  backlink_details: "paid, 35 credits/call against the DataForSEO backlinks API. Needs a budget signature.",
-  disavow_candidates: "paid, 40 credits/call. Needs a budget signature, and a spam-score threshold chosen per site rather than defaulted.",
-  audit_speed: "paid, 15 credits/call plus a Lighthouse run per URL. Needs a budget signature and a per-site URL list.",
+  link_gap:
+    "paid, 45 credits/call. The budget signature arrived 2026-09-02 and the tool ran paid on " +
+    "2026-09-04; the blocker is the same one keyword_gap has and is stated there in full — a " +
+    "competitor domain PER SITE, a column SITES does not yet carry.",
+  backlink_changes:
+    "paid, 35 credits/call against the DataForSEO backlinks API. The budget signature arrived " +
+    "2026-09-02 and the tool ran paid twice on 2026-09-04. NO per-site input is missing: a " +
+    "project_id alone is enough and was measured that way. What is left is PRICE ALONE — 35 " +
+    "credits per site, eight sites, every sweep. Excluded because it is expensive, not because " +
+    "it is unsigned or unusable (same shape as serp_snapshot below).",
+  backlink_details:
+    "paid, 35 credits/call against the DataForSEO backlinks API. The budget signature arrived " +
+    "2026-09-02 and the tool ran paid twice on 2026-09-04, project-scoped and bare-target. Like " +
+    "backlink_changes it needs no per-site input beyond the project_id the matrix already " +
+    "carries, so the remaining reason is the same one: 35 credits per site plus the vendor's own " +
+    "fee, every sweep.",
+  disavow_candidates:
+    "paid, 40 credits/call. The budget signature arrived 2026-09-02 and the tool ran paid on " +
+    "2026-09-04; the OTHER half of the old reason is still real and is why this stays excluded — " +
+    "a spam-score threshold chosen per site rather than defaulted. Add a threshold column to " +
+    "SITES and the cell becomes includable.",
+  audit_speed:
+    "paid, 15 credits/call plus a Lighthouse run per URL. The budget signature arrived " +
+    "2026-09-02, so that half of the old reason is gone; the per-site URL list is NOT — this " +
+    "tool audits named URLs, and the matrix carries a domain. Nothing here claims a paid run: " +
+    "unlike its neighbours above, this tool was not exercised paid in the 2026-09 round.",
   audit_content: "paid, 12 credits/call. Reads a stored pull AND a stored crawl, so it can only run after K1 and K2 both land on the same site.",
   ai_visibility:
     "paid, 90 credits/call — and BLOCKED beyond price: H-01 (audit 2026-08-26) found the vendor " +
