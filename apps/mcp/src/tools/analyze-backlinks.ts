@@ -249,16 +249,40 @@ function renderList<Row>(list: {
  * can see WHICH source is suspicious without buying a second lookup. SeoGrep still adds no verdict
  * of its own: the number is printed under the vendor's field name and nothing is derived from it.
  */
+/**
+ * WHY THE TWO REFERRING-DOMAIN COUNTS DISAGREE — finding AB-3 (2026-09-04).
+ *
+ * MEASURED on the live run: the summary line said `Referring domains: 139` and the list header two
+ * lines below said `Top referring domains (137)`. Both numbers are DataForSEO's and both are
+ * right; they are simply not the same measurement. The summary count comes from
+ * /backlinks/summary/live, the list is what /backlinks/referring_domains/live returned for this
+ * lookup, and dfs/backlinks.ts issues them as two separate paid requests.
+ *
+ * Printed on EVERY answer, including one whose list is empty: a reader who sees the pair agree
+ * once will read them as one figure checked twice, which is exactly the confidence the two
+ * endpoints do not support.
+ */
+export const TWO_ENDPOINT_COUNT_NOTE =
+  "The referring-domain count in the summary above and the list below are two SEPARATE DataForSEO " +
+  "measurements: the summary figure is `referring_domains` from /backlinks/summary/live, and the " +
+  "list is what /backlinks/referring_domains/live returned for this lookup. They routinely " +
+  "disagree by a few domains, and neither confirms the other.";
+
 function renderReferringDomains(list: BacklinkList<ReferringDomainRow>): readonly string[] {
-  if (list.rows.length === 0) return ["Top referring domains: none on record."];
-  return renderList({
-    header: listHeader("Top referring domains", list),
-    rows: list.rows,
-    render: renderReferringDomainRow,
-    budget: REFERRING_DOMAIN_LIST_CHAR_BUDGET,
-    noun: "referring domain",
-    advice: REFERRING_DOMAIN_TRUNCATION_ADVICE,
-  });
+  if (list.rows.length === 0) {
+    return [TWO_ENDPOINT_COUNT_NOTE, "Top referring domains: none on record."];
+  }
+  return [
+    TWO_ENDPOINT_COUNT_NOTE,
+    ...renderList({
+      header: listHeader("Top referring domains", list),
+      rows: list.rows,
+      render: renderReferringDomainRow,
+      budget: REFERRING_DOMAIN_LIST_CHAR_BUDGET,
+      noun: "referring domain",
+      advice: REFERRING_DOMAIN_TRUNCATION_ADVICE,
+    }),
+  ];
 }
 
 function renderAnchors(list: BacklinkList<AnchorRow>): readonly string[] {

@@ -10,6 +10,7 @@ import {
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import {
   MAX_RENDERED_OUTPUT_CHARS,
+  TWO_ENDPOINT_COUNT_NOTE,
   formatBacklinkProfile,
   makeAnalyzeBacklinksTool,
 } from "./analyze-backlinks.ts";
@@ -75,12 +76,38 @@ describe("formatBacklinkProfile", () => {
         "• Broken backlinks: 118\n" +
         "• Backlink spam score: 8\n" +
         "• Domain rank: 371 of 1,000\n\n" +
+        `${TWO_ENDPOINT_COUNT_NOTE}\n\n` +
         "Top referring domains (2 of 12,372):\n" +
         "• seoblog.example — 9,864 backlinks, rank 302, backlinks_spam_score 6\n" +
         "• news.example — 1,204 backlinks, rank 218, backlinks_spam_score 11\n\n" +
         "Top anchors (1 of 83,736):\n" +
         '• "example" — 4,186 backlinks',
     );
+  });
+
+  /**
+   * AB-3: the summary count and the list count are two SEPARATE vendor measurements — measured
+   * live on 2026-09-04, two characters apart, disagreeing: `Referring domains: 139` under
+   * `Top referring domains (137)`. Neither number is wrong; the reply simply never said they came
+   * from two endpoints, so the pair read as one figure printed twice.
+   */
+  it("names both DataForSEO endpoints when it prints two referring-domain counts", () => {
+    const text = formatBacklinkProfile(FULL_PROFILE);
+    expect(text).toContain("/backlinks/summary/live");
+    expect(text).toContain("/backlinks/referring_domains/live");
+    expect(text).toContain("neither confirms the other");
+    // The note belongs to the LIST, so it stands between the summary and the list header.
+    expect(text.indexOf("• Referring domains:")).toBeLessThan(text.indexOf(TWO_ENDPOINT_COUNT_NOTE));
+    expect(text.indexOf(TWO_ENDPOINT_COUNT_NOTE)).toBeLessThan(text.indexOf("Top referring domains ("));
+  });
+
+  it("still names the two endpoints when DataForSEO returned no referring domain at all", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      top_referring_domains: { total_count: 0, rows: [] },
+    });
+    expect(text).toContain(TWO_ENDPOINT_COUNT_NOTE);
+    expect(text).toContain("Top referring domains: none on record.");
   });
 
   it("omits the 'of N' clause when nothing was truncated", () => {
