@@ -227,6 +227,8 @@ gerekçesiyle yazmış — kart tarafı düşünülmüş.
 | B-4 | **P2** | **GSC'ye HİÇ bağlanmamış bir projede precondition mesajı yanlış tool'a yönlendiriyor.** N7: seogrep.com'un Search Console bağlantısı yok (canlı `list_projects`: *"Search Console: not connected"*), ama tool `Run pull_gsc_data first.` diyor. Kullanıcı öyle yapınca `pull_gsc_data` `Run connect_gsc first.` diyor — iki adımlı bir çıkmaz, ve ikisi de kullanıcının kendi panelinde ZATEN görünen bir gerçeği (bağlı değil) söylemiyor. `load.ts:40-47` mesajın tekliğini varlık-kâhini gerekçesiyle savunuyor ve **bilinmeyen/başka kiracının projesi için bu doğru** — ama KENDİ projesinin bağlı olmadığı bilgisi zaten `list_projects`'te basılıyor, yani o vakada gizlenecek bir şey yok | §3 N7 vs `pull_gsc_data` §3 N3 (iki farklı cümle, aynı proje); canlı `list_projects` çıktısı; `gsc-data/load.ts:35-36` `NO_PULL_MESSAGE`, `:40-47` gerekçe | Çekim yoksa bağlantı durumu bir kez okunsun (`loadGscTokenStatus` ile aynı yol, `load.ts:91`): bağlantı **yoksa** cümle `connect_gsc`'ye, **varsa** `pull_gsc_data`'ya yönlendirsin. Varlık kâhini korunur: her iki cümle de yalnız KENDİ kiracısının projesi çözüldüğünde ayrışır; çözülemeyen id bugünkü tek cümleyi almaya devam eder. **Hakem şerhi (2026-09-03) — sınıf atfı:** bu bulgu `keyword_positions` F-3 (ön koşul reddi `track_keywords`'ü adlandırıyor, eksik adım `serp_snapshot`) ile **aynı sınıftır**, ve Dilim 1'de aynı sınıf `get_job_status` B-3 olarak **P2** kaydedilmişti. F-3'ün şiddeti bu turda P1 → P2'ye çekilerek üçü hizalandı; **üçü tek kopya düzeltmesi olarak birlikte kapanmalı** (bkz. `_DILIM3-HAKEM-SINIFLAR.md` sınıf 3) | **KAPANDI #217** — ön koşul cümlesi bağlantı durumunu okuyor: bağlantı yoksa `connect_gsc`, varsa `pull_gsc_data`; `load.ts` yorumu canlı ölçümü (2026-09-03, "Search Console: not connected") adıyla taşıyor. Sınıf kardeşi `keyword_positions` F-3 → #216 + canlı ✔ |
 | B-5 | **P2** | **`days` gibi kardeş tool'un ALDIĞI bir anahtar sessizce reddediliyor.** N11: `{"project_id":…,"days":30}` → `✖ Unrecognized key: "days"`. `pull_gsc_data` `days`'i alır, bu tool almaz ve **neden almadığı hiçbir yerde yazmaz** — analiz penceresi ÇEKİM zamanında belirlenmiştir. Bir model (ya da insan) "son 30 günün quick win'lerini bul" isteğini doğal olarak buraya `days` ile taşır. Ayrıca aynı satırda noktalama kusuru var: `… "days" You were not charged.` **Hakem düzeltmesi (2026-09-03):** bu "ayırıcısız birleştirme" DEĞİLDİR — birleştirme tek yerde yapılıyor (`credits/free-refusal.ts:53-59`) ve tek satırda boşluk **kasıtlıdır** (`A one-line refusal is prose, and a sentence follows a sentence after a space`), çok satırda `\n\n` kullanılıyor; o ayrım Dilim 2'nin `audit_speed` B-6'sıyla **#210'da kapandı**. Gerçek kusur: **zod'un tek satırlık mesajı nokta ile bitmiyor** (`… "days"` + boşluk) | §3 N11 canlı çıktısı; `gsc-discovery-shared.ts:118-120` tek alanlı şema; `pull-gsc-data.ts:65-71` `days` alanı; `credits/free-refusal.ts:53-59` | Description'a ya da mdx'e bir cümle: pencere uzunluğunun `pull_gsc_data` çağrısında seçildiği ve bu analizin **saklanan** çekimin penceresini kullandığı. Şema değişmesin — `strict()` doğru davranıyor; eksik olan cevabın YÖNLENDİRİCİ olmaması. **Noktalama yarısı zod mesajının kendisinde kapanır** (tek satırlık ret nokta ile bitsin); `withNoChargeNote`'un dalı DEĞİŞMESİN. Dilim 3'ün dördü tek düzeltmeyle kapanır — kök kayıt `pull_gsc_data` B-7 | **KISMEN KAPANDI #217** — noktalama yarısı registry'de kapandı (kök kayıt `pull_gsc_data` B-7). **AÇIK yarısı:** `days`'in neden alınmadığını (pencerenin ÇEKİMDE seçildiğini) söyleyen cümle hiçbir description/mdx'e girmedi (ölçüldü) |
 
+| B-6 | P2 | **Tekil/çoğul hatası: `1 clicks`.** Satır biçimi `N clicks` sabit olduğu için tek tıklamalı sayfa canlıda `1 clicks` diye basıldı. Aynı sınıf bu turda `my_pages` A-4'te de ölçüldü (`1 pages`, `1 page … also appear`), yani kusur bu tool'a özgü değil — satır biçimlerinin tekil dalı olmayan bir aile alışkanlığı | Şef canlı turu, 2026-09-03, deploy `bbc259d`, dentnotion, Δ −10 (aşağıdaki canlı doğrulama eki) | Sayıya göre tekil/çoğul seçilsin (`n === 1 ? "click" : "clicks"`); dosya bunu başka yerlerde zaten doğru yapıyor. Saf fonksiyon, testi ucuz. `my_pages` A-4 ile **tek düzeltme** olarak ele alınabilir | |
+
 ### Ölçülemeyenler (ve nedeni)
 
 - **`gsc_discovery_runs` satırının GERÇEKTEN yazıldığının canlı kanıtı** — yazma yolu var
@@ -240,3 +242,27 @@ gerekçesiyle yazmış — kart tarafı düşünülmüş.
   (kredi tavanı: 2 çağrı, ikisi de determinizm eksenine harcandı).
 - **Pozisyona göre beklenen CTR** — referans listesinde böyle bir kural **YOK** (§5 şerhi), bu yüzden
   B-1 bir eşik önermiyor.
+
+## Canlı doğrulama eki (şef, 2026-09-03, deploy `bbc259d`, Δ −10)
+
+Dilim 3 kapanışında bu tool "canlıda koşulmadı" ile kapanmıştı (`_DILIM3-KAPANIS.md` tool tablosu:
+*"bu turda canlıda koşulmadı (10 kredi; B-1a/B-4 birim+docs kanıtıyla kapalı)"*). #217 merge edilip
+`bbc259d` deploy olduktan sonra şef 10 kredilik tek bir çağrı koştu (dentnotion, `project:
+dentnotion.com`). Ölçülenler:
+
+- **B-1a ✔ CANLIDA.** Tavsiye cümlesi artık tool'un zaten bastığı CTR'ı okuyor ve düşük CTR'da
+  önce SERP'e bakmayı söylüyor (birebir): *"It is being shown and not clicked — CTR 0.0% against
+  0.1% across this shortlist — so look at the results page … an AI Overview, a featured snippet or
+  ads can take the click"*. Kapanış turunun `KAPANDI #217` iddiası artık bir birim-testi iddiası
+  değil, canlı ölçümdür.
+- **R-7.11 / B-2 ✔ CANLIDA.** Ortak sabit (`AVERAGE_POSITION_NOTE`) basıldı (birebir):
+  *"Position is Google's AVERAGE over the analyzed window … not where it sat on any single day"*.
+- **B-3 hâlâ AÇIK — değişmedi.** Son satır yine `…and 868 more cleared the bands.` biçiminde
+  basıldı: başlıktaki sayfa sayısı kesilmiş kısa listeden, kalan sayı kesilmemiş satır kümesinden
+  geliyor. Kapanış turunun `AÇIK — PR'da karşılığı yok` kararı canlıda **doğrulandı**.
+- **Yeni bulgu B-6 (P2):** `1 clicks` — tekil/çoğul hatası (yukarıdaki bulgu tablosunda).
+
+**Bu ekin ÖLÇMEDİĞİ:** tek bir mülkte (dentnotion) tek bir çağrı koşuldu; B-1b'nin sıralama
+politikası **kasten** değişmediği için sıralama ekseni yine ölçülmedi (imza kalemi), B-5'in açık
+yarısı (`days`'in neden alınmadığını söyleyen cümle) canlıda aranmadı ve `gsc_discovery_runs`
+satırının yazıldığı yine doğrulanmadı (DB erişimi gerekir).
