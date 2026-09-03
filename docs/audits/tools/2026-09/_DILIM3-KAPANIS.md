@@ -6,8 +6,7 @@
 > indekstir; her satırın ayrıntısı kendi kaydındaki `durum (kapanış, 2026-09-03)` sütunundadır.
 > Her kalem ya bir PR numarasıyla ya da `AÇIK / ERTELENDİ / İMZA KALEMİ — neden` ile biter.
 > Kapatan PR'lar: **#215** (`fix/ledger-scope-d3`, main'de) · **#216** (`fix/positions-d3`, main'de) ·
-> **#217** (`fix/gsc-d3`, **CI'da — henüz main'de DEĞİL**). Taban: `main` `aa52154` (#215 + #216 merge edilmiş).
-> **#217 satırlarındaki `(CI'da)` şerhi merge sonrası şef tarafından kaldırılır.**
+> **#217** (`fix/gsc-d3`) `bbc259d` ile **main'de** (2026-09-03; db şeridi 117cb00 ile lokalde VERIFY-DB PASS, CI verify-db yeşil). Taban: `main` `aa52154` (#215 + #216 merge edilmiş).
 
 ## Sayılar
 
@@ -84,7 +83,7 @@ yeniden açılmaması bu turda **kasıtlı bir kısıt** olarak taşındı ve di
 
 | kalem | kaynak | not |
 |---|---|---|
-| **#217'nin merge'ü ve deploy'u** | bu dosya | CI'da; merge sonrası `(CI'da)` şerhleri kalkar ve canlı tur koşulur (≈25 kredi: sayfalama, bayt bütçesi, yeni cümleler) |
+| **#217 canlı turu** | bu dosya | merge edildi; deploy sonrası canlı tur (≈25 kredi: sayfalama, bayt bütçesi, yeni cümleler) — sonuç bu dosyanın sonuna ek olarak yazılır |
 | Yukarıdaki iki imza kalemi | imza tablosu | ikisi de para/ürün ekseninde |
 
 ## Dilim 4'e devredenler
