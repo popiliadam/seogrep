@@ -15,6 +15,10 @@ Pass a `project_id` (or any `target` domain) and it returns the stored readings,
 
 Two readings a month apart are two observations, not a trend, and SeoGrep will not draw a line through the days nobody measured. Every comparison between two readings says how far apart they were, and an interval longer than a day says outright that nothing was measured in between. No answer here claims a direction of travel: a movement is printed as `#7 → #4`, never as a rise or a fall.
 
+## This is not Search Console's average position
+
+SeoGrep prints the word "position" in two places, and they are different measurements. Here it is a **SERP rank observed at one moment** — rank #4 means the fourth organic result on the page that was fetched, and it is a whole number reported by DataForSEO. In [`find_quick_wins`](/docs/tools-reference/find-quick-wins) it is **Search Console's average position**, computed by Google across a reporting window, and it can be a decimal such as 12.3. Reading the difference between the two as a movement would be reading a change nobody measured, so SeoGrep never compares them.
+
 ## "Not found" and "not measured" are different answers
 
 A reading that searched and found nothing reports the absence **and how many results were examined** — it is not position 0, and it says nothing about results beyond those examined. A reading that never happened says so instead: the position is unknown, and nothing was examined at all.

@@ -446,6 +446,12 @@ export function makeResearchKeywordsTool(deps: ResearchKeywordsDeps = {}): Regis
       // commit as one chain. A fetch failure throws, so withCredits releases (no charge), and so
       // does the empty-lookup refusal, which is caught HERE — outside the guard, where the reserve
       // is already released — and turned into its sentence.
+      //
+      // NO `projectId`, DELIBERATELY (migration 0033). The subject of this run is a KEYWORD SET,
+      // never a site: the tool takes no `target` and no `project_id`, so it has no project to name
+      // and "no project scope" is the TRUE answer rather than a missing one. Resolving the keywords
+      // to whichever project happens to track them would invent a number somebody adds up
+      // (credits/guard.ts). Pinned by handler-charge-scope-coverage.pin.test.ts.
       try {
         return await withCredits({ userId: ctx.userId }, { tool: "research_keywords" }, () =>
           serveKeywordOverview({ port, writeRun }, ctx, input, keywordSet),

@@ -3588,6 +3588,18 @@ export const DOC_PROSE = {
           "movement is printed as `#7 → #4`, never as a rise or a fall.",
       },
       {
+        heading: "This is not Search Console's average position",
+        body:
+          "SeoGrep prints the word \"position\" in two places, and they are different " +
+          "measurements. Here it is a **SERP rank observed at one moment** — rank #4 means the " +
+          "fourth organic result on the page that was fetched, and it is a whole number reported " +
+          "by DataForSEO. In " +
+          "[`find_quick_wins`](/docs/tools-reference/find-quick-wins) it is **Search Console's " +
+          "average position**, computed by Google across a reporting window, and it can be a " +
+          "decimal such as 12.3. Reading the difference between the two as a movement would be " +
+          "reading a change nobody measured, so SeoGrep never compares them.",
+      },
+      {
         heading: "\"Not found\" and \"not measured\" are different answers",
         body:
           "A reading that searched and found nothing reports the absence **and how many results " +

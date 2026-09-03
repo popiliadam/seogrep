@@ -243,6 +243,25 @@ async function resolveCompareTarget(
   };
 }
 
+/**
+ * THE ONE PROJECT a comparison can honestly be booked against on the ledger, or undefined.
+ *
+ * A comparison names up to ten targets and a ledger row carries ONE scope, so this is the only
+ * rule available that does not guess: when every project-backed target came from the SAME project,
+ * that project IS the call's scope; when two of the caller's own projects are compared against
+ * each other — or none is named — there is no single answer and undefined is the honest one.
+ *
+ * Taking the first named target instead would attribute a 900-credit call to LIST ORDER, and
+ * credits/guard.ts says why that is worse than a blank: an invented scope is a number somebody
+ * adds up. The per-target run rows are unaffected — each still carries its own project (0032).
+ */
+function soleComparedProjectId(resolved: readonly ResolvedTarget[]): string | undefined {
+  const ids = new Set(
+    resolved.flatMap((target) => (target.project === null ? [] : [target.project.id])),
+  );
+  return ids.size === 1 ? [...ids][0] : undefined;
+}
+
 /** How one compared target is named in the answer: its label, and what that label stands for. */
 export function describeTarget(resolved: ResolvedTarget): string {
   const group = resolved.group;
@@ -382,7 +401,14 @@ export function makeAiVisibilityCompareTool(deps: AiVisibilityCompareDeps = {}):
       const lookup = (): Promise<ToolResult> =>
         withCredits(
           { userId: ctx.userId },
-          { tool: "ai_visibility_compare", units: comparedTargetCount(input) },
+          // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033). This is the
+          // one tool in the family whose call can name SEVERAL projects and the dearest in the
+          // product, so the scope is the sole distinct one or nothing at all — see the helper.
+          {
+            tool: "ai_visibility_compare",
+            units: comparedTargetCount(input),
+            projectId: soleComparedProjectId(resolved),
+          },
           async () => {
             const result = await port.fetchAiVisibilityCompare(query);
             const text = formatAiVisibilityCompare(result, resolved);

@@ -115,10 +115,15 @@ describe("the reserve is sized from the compared target count, not from the flat
    * The reserve NEVER carries an amount. `units` is a count and the price stays in the table; a
    * handler that started passing credits directly would move a signed price out of the
    * human-approved table and into a tool body, which is what the table exists to prevent.
+   *
+   * The key set stays an exhaustive WHITELIST rather than a "no amount key" search, so a price
+   * arriving under any name is still caught. `projectId` joined it on 2026-09-03 (H-1): it is the
+   * ledger's project scope (migration 0033), a subject and not a price, and the reserve carrying
+   * it is pinned by this tool's own project-scope spec.
    */
   it("hands the guard a COUNT and nothing resembling a price", async () => {
     const { meta } = await runWithCapturedCharge({ targets: domains(2), platform: "chat_gpt" });
-    expect(Object.keys(meta).sort()).toEqual(["tool", "units"]);
+    expect(Object.keys(meta).sort()).toEqual(["projectId", "tool", "units"]);
     expect(meta.units).toBeLessThanOrEqual(10);
   });
 });

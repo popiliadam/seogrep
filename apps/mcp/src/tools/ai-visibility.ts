@@ -324,8 +324,13 @@ export function makeAiVisibilityTool(deps: AiVisibilityDeps = {}): RegisteredToo
       // here the release has happened, so an explanatory refusal can be returned for free.
       // Without this branch the throw reaches the registry's generic catch and a vendor refusal
       // DataForSEO explained in words is answered with "failed unexpectedly … quote reference".
+      // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the
+      // ownership-gated project resolved above. charge:"handler" settles its own credits, so
+      // nothing upstream can supply this; undefined is a REAL answer ("no project scope"), never
+      // a gap (credits/guard.ts) — and it is the honest one for the subject that names no domain.
+      const meta = { tool: "ai_visibility", projectId: project?.id } as const;
       const lookup = (): Promise<ToolResult> =>
-        withCredits({ userId: ctx.userId }, { tool: "ai_visibility" }, async () => {
+        withCredits({ userId: ctx.userId }, meta, async () => {
           const result = await port.fetchAiVisibility(query);
           const text = formatAiVisibility(result, project);
           // THE RUN IS RECORDED BEFORE THE REPLY IS RETURNED, unguarded — migration 0032, and

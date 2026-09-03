@@ -585,7 +585,12 @@ export function makeCompareCompetitorsTool(deps: CompareCompetitorsDeps = {}): R
       // Serving path: settle synchronously at the surface (no jobId) — reserve -> fetch ->
       // commit as one chain. Any DataForSEO request failing throws, so withCredits releases and
       // a partial comparison is never billed.
-      return withCredits({ userId: ctx.userId }, { tool: "compare_competitors" }, async () => {
+      // WHICH PROJECT THE SPEND IS FOR, on the ledger row itself (migration 0033) — the
+      // ownership-gated project resolved above. charge:"handler" settles its own credits, so
+      // nothing upstream can supply this; undefined on a bare-target call is a REAL answer
+      // ("no project scope"), never a gap (credits/guard.ts).
+      const meta = { tool: "compare_competitors", projectId: subject.project?.id } as const;
+      return withCredits({ userId: ctx.userId }, meta, async () => {
         const comparison = await port.fetchCompetitorComparison({
           target: subject.domain,
           competitors: rivals.competitors,
