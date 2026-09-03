@@ -1,0 +1,211 @@
+# `keyword_positions` — tool kontrol kaydı (2026-09 turu)
+
+> Dilim: 3 · İşçi: Opus 5 (d3-positions) · Tarih: 2026-09-03 · Referans: `docs/reference/2026-09-02-seo-referans-listesi.md`
+> Kural: her adımın sonucu ÖLÇÜLDÜ / ÖLÇÜLEMEDİ / ATLANDI olarak yazılır. "Geçti" yalnız kanıt satırıyla geçer.
+> Kredi satırı, docs cümlesi, description: burada ALINTI yapılır, özetlenmez.
+
+## Özet
+
+| adım | sonuç | tek satır kanıt |
+|---|---|---|
+| 1 Statik | ÖLÇÜLDÜ | Handler `apps/mcp/src/tools/keyword-positions.ts:164`; canlı `tools/list` description + şeması kaynakla BİREBİR (drift yok, `additionalProperties:false` canlıda VAR). **İş emrinin "DataForSEO SERP tabanlı" önermesi YANLIŞ:** tool hiçbir vendor çağrısı yapmaz, `keyword_position_measurements` tablosunu okur |
+| 2 Mutasyon | ÖLÇÜLDÜ — 7 mutasyon, 4 KIRMIZI / **3 YEŞİL KALDI** | M2 (ücret adı `keyword_positions`→`audit_schema`), M3+M3b (her iki `.eq("user_id", …)` silindi), M4 (`storedMeasurementCount`→`rows.length`) — dördü de 147/147 dosya, 3914/3914 test yeşil, `tsc --noEmit` temiz |
+| 3 Canlı negatif | ÖLÇÜLDÜ — 17 senaryo | özne yok · iki özne · bozuk uuid · bilinmeyen proje · arşivli proje · şema dışı anahtar · limit 0/201/1.5 · device/dil/keyword/target sınırları · saklanmamış (filtreli+filtresiz) · geçersiz domain; **17/17 kredi Δ=0, defterde tek `keyword_positions` satırı yok** |
+| 4 Canlı mutlu yol | ÖLÇÜLDÜ — 2 ücretli çağrı, **−20 kredi** | `dentnotion.com` üzerinde 3 saklı ölçüm okundu; **üçü de `NOT MEASURED`** — ürün tarihinde `keyword_positions`'ın ilk ücretli çağrısı bu turda yapıldı (defter: "across 24 tools" → "across 25 tools") |
+| 5 SEO güncelliği | ÖLÇÜLDÜ | R-6.5 **UYUYOR** (motora gitmiyor, sağlayıcıyı ADIYLA söylüyor) · R-8.6 **UYUYOR** ("goto" ayrıştırıcısı hiç YOK; eşleştirme `item.domain` üzerinden) · R-7.11 **AYKIRI** (aynı üründe "position" iki farklı şey; hiçbir yüzey ikisini ayırmıyor) · R-5.5/R-8.5 **AYKIRI** (AI Overview varlığı ölçülüp `report`'a yazılıyor, hiçbir tool okumuyor) · R-8.3 İLGİSİZ |
+| 6 Kart | ÖLÇÜLDÜ | `card-map.ts:20` `keyword_positions: "list"` (PLANLI); `CARDED_TOOLS` yalnız `get_credit_balance` — 20 canlı çağrının hiçbirinde `structuredContent` yok, aynı oturumda `get_credit_balance` 5/5 döndürdü. Plan ↔ canlı tutarlı |
+| 7 Kanıt üçlüsü | ÖLÇÜLDÜ | Bu dosya ✔ · `plan.mjs` `EXCLUDED` girişi VAR ama **gerekçesi olgusal olarak yanlış** (F-6) · `goals/` hedefi EVET (M2/M3/M3b/M4) |
+
+**Karar (ölçüm turu, 2026-09-03):** **DÜZELTME GEREKLİ** — çıktının dürüstlük disiplini (üç sonucun ayrı tutulması, pencere↔toplam ayrımı, boşluğun trend sayılmaması, sağlayıcının adıyla anılması) canlıda kusursuz çalışıyor ve bu turun en iyi metinlerinden; fakat (a) ücretin defterde HANGİ TOOL ADIYLA ve HANGİ TUTARLA yazıldığı çağrı yerinde pinsiz, (b) NEVER#4 kiracı filtrelerinin İKİSİ de Docker'sız hiçbir kapıda korunmuyor, (c) 10 kredi yalnız `count > 0` şartıyla alınıyor — üç `not_measured` satırı okumak da tam ücret, ve canlıda tam olarak bu oldu, (d) ölçülen ve saklanan URL + AI Overview verisi bu tool'dan okunamıyor.
+
+**Karar (kapanış, YYYY-MM-DD):** düzeltme dalgası bittiğinde KAPATAN tur yazar.
+
+## 1. Statik okuma
+
+- Handler: `apps/mcp/src/tools/keyword-positions.ts:160-215` (`makeKeywordPositionsTool`, `name` satırı `:164`).
+  Depo katmanı: `apps/mcp/src/tools/keyword-positions-store.ts` (kolon projeksiyonu `:73`, `narrow` `:80`, sayım `:100`, pencere `:116`).
+  Biçimlendirici: `apps/mcp/src/tools/keyword-positions-format.ts` (seri anahtarı `:82`, boşluk cümlesi `:49`, kapanış notu `:54`).
+  Özne çözümü: `apps/mcp/src/tools/project-target.ts` (`resolveTarget` `:170`).
+  Yazan taraf (bu tool DEĞİL): `serp-snapshot-store.ts:164 measurementRow`, tablo `keyword_position_measurements` (migration `0030_rank_tracking.sql`).
+- Zod şeması (alanlar, kısıtlar) — canlı `tools/list` `inputSchema` ile bayt bayt örtüşüyor:
+  - `target`: `z.string().min(1).optional()`
+  - `project_id`: `z.uuid().optional()` (canlı JSON Schema `pattern` ile uuid)
+  - `keyword`: `z.string().min(1).optional()`
+  - `location_name`: `z.string().min(1).optional()`
+  - `language_code`: `z.string().min(2).optional()`
+  - `device`: `z.enum(["desktop","mobile"]).optional()`
+  - `limit`: `z.number().int().min(1).max(200).default(50)`
+  - **`additionalProperties: false`** — canlı şemada VAR (Dilim 1 F-8 sınıfı burada kapalı; N6 ile doğrulandı)
+  - `target` / `project_id` **ikisi de opsiyonel**; "tam olarak biri" kuralı şemada değil, `resolveTarget`'ta iş kuralı olarak duruyor
+- Description (birebir alıntı, canlı `tools/list` = kaynak `DESCRIPTION`, `keyword-positions.ts:111-116`):
+  > "Read the SERP positions already measured and stored for a domain's keywords — each reading with its own date, location, language and device. It measures nothing and contacts no search engine: it reports what was stored, keeps 'not found' and 'not measured' apart, and never draws a trend through days nobody measured. Costs 10 credits. If nothing has been measured yet, it says so and charges nothing."
+- Kredi satırı (`apps/mcp/src/credits/costs.ts:168`, birebir): `  keyword_positions: 10,`
+  Aynı bloktaki gerekçe (`costs.ts:159-167`, birebir alıntının ilk üç satırı):
+  `  // keyword_positions = 10 (row #5, "saklanmışı okur" — it reads what was stored). Vendor cost` /
+  `  // $0.00: the measurements it reads were paid for when they were TAKEN, by the tool that spends` /
+  `  // the DataForSEO money, so the margin here is not a ratio at all.`
+- Docs sayfası: `apps/web/content/docs/tools-reference/keyword-positions.mdx`.
+  Kredi cümlesi birebir: `**Cost:** 10 credits.`
+  Ücretsiz-ret cümlesi birebir:
+  > "The tool says so and **charges nothing** — that refusal is returned before any credits are reserved. It is the **only** free answer this tool gives: a read that delivers stored readings is charged at the cost above, whether it returns one reading or hundreds."
+  Zincir cümlesi birebir:
+  > "Positions appear here once a SERP snapshot has been taken for a domain's keywords. [`track_keywords`](/docs/tools-reference/track-keywords) chooses which keywords to watch — a separate step, and that one is free; [`serp_snapshot`](/docs/tools-reference/serp-snapshot) is what takes the readings, and it is priced per keyword."
+- Tutarsızlıklar: **bir tanesi var, ve tool ile docs arasında.** Karşılaştırılanlar: (1) canlı description ↔ kaynak `DESCRIPTION` — aynı; (2) canlı `inputSchema` (7 alan, default, enum, min/max, `additionalProperties:false`) ↔ zod şeması `:65-107` — tam örtüşme; (3) docs "10 credits" ↔ `TOOL_COSTS.keyword_positions = 10` — aynı; (4) docs "1-200, default 50" ↔ `MAX_POSITION_WINDOW=200`, `DEFAULT_POSITION_WINDOW=50` — aynı. **Ayrık düşen:** docs sayfası eksik adımı `serp_snapshot` ADIYLA yazıyor, tool'un kendi ret metni (`nothingStoredMessage`, `:119-130`) YAZMIYOR — yalnız `track_keywords`'ü adlandırıyor (F-3).
+- Seçilebilirlik: LLM bu tool'u "şu kelimede kaçıncı sıradayım / sıralamam ne oldu" cümlelerinde seçer ve 2026-08-25 turunda doğru seçildiği ölçülmüştü (`docs/plans/2026-08-25-tool-revizyon-defteri.md:86`).
+  **Karışacağı komşular, üç eksen:**
+  1. **`serp_snapshot`** — asıl karışma. Kullanıcı "sıralamamı ölç" derse ÖLÇEN tool o; "sıralamam neydi" derse OKUYAN bu. Description ayrımı açıkça yazıyor ("It measures nothing").
+  2. **`find_quick_wins` / `detect_cannibalization`** — ikisi de "position" kelimesini kullanıyor ama **Search Console ortalama pozisyonunu** kastediyor (`find-quick-wins.ts:124` → `position ${pos(anchor.position)}`, ondalıklı). Bu tool `rank_group #N` (tam sayı, SERP sırası) basıyor. İkisinin farkı **hiçbir yüzeyde yazılı değil** (F-4, R-7.11).
+  3. **`ranked_keywords`** — "hangi kelimelerde çıkıyorum" sorusu ona (vendor'ın kendi indeksinden), "izlediğim kelimede ne oldu" buna gider.
+  **Ölçülmüş asıl risk:** tool'un adı ve docs başlığı "SERP positions" diyor, fakat bugün canlıda tek satır gerçek pozisyon YOK — 3 saklı satırın 3'ü de `not_measured` (bkz. 4. adım).
+
+## 2. Mutasyon (test gerçekten bakıyor mu)
+
+Kapı: `pnpm --filter @pseo/mcp test` — **147 dosya / 3914 test**. Taban: exit 0.
+`*.db.test.ts` Docker ister — **db şeridi koşulmadı** (`keyword-positions.db.test.ts`, 8 test).
+
+| # | kırılan şey (kaynak, satır) | beklenen kırmızı test | sonuç | not |
+|---|---|---|---|---|
+| M1 | `dfs/serp.ts:646` — `organicItems`'ın item-type süzgeci etkisizleştirildi (`item.type !== "__never__" \|\| …`), yani her SERP element tipi organik sayılıyor (iş emrinin R-8.5 hipotezi) | SERP port + snapshot testleri | **KIRMIZI** | 2 dosya / 6 test; ör. `serp-snapshot.test.ts:470` — `not found among the 2 organic result(s)` → 4 oldu. **Allowlist gerçekten pinli** |
+| **M2** | `keyword-positions.ts:200` — `withCredits(…, { tool: "keyword_positions" })` → `{ tool: "audit_schema" }` (yani 10 kredilik okuma deftere **`audit_schema` adıyla ve 5 kredi** olarak yazılır) | — | **YEŞİL KALDI** | 147/147 dosya · 3914/3914 test · exit 0 |
+| M2b | `credits/costs.ts:168` — `keyword_positions: 10` → `9` | fiyat pini | **KIRMIZI** | 2 test: `costs.test.ts:26` "matches the approved v0 literals exactly" · `keyword-positions.test.ts:86` "is the SIGNED 10 credits" — **tablo pinli, çağrı yeri değil** |
+| **M3** | `keyword-positions-store.ts:104` — `countStoredMeasurements`'tan `.eq("user_id", userId)` silindi | — | **YEŞİL KALDI** | 147/147 · 3914/3914 · `tsc --noEmit` **temiz** |
+| **M3b** | `keyword-positions-store.ts:120` — `loadStoredMeasurements`'tan `.eq("user_id", userId)` silindi (aynı eksen, BAŞKA konum — ders 14) | — | **YEŞİL KALDI** | 147/147 · 3914/3914 · `tsc --noEmit` temiz |
+| **M4** | `keyword-positions.ts:209` — `storedMeasurementCount` → `rows.length` (toplam, pencerenin kendisinden türetiliyor) | — | **YEŞİL KALDI** | 147/147 · 3914/3914 · exit 0 |
+| M5 | `keyword-positions.ts:187` — ücretsiz ret kapısı `=== 0` → `=== -1` (boş depo artık ÜCRETLİ dala giriyor) | ücretsiz-ret testleri | **KIRMIZI** | 2 dosya / 5 test; ör. "refuses when nothing has been measured — WITHOUT reading a single row" |
+| M6 | `keyword-positions.ts:151` — `normalizeKeywordFilter`'dan `.toLowerCase()` silindi | kelime katlama testleri | **KIRMIZI** | 2 test: "normalizes the keyword filter the same way storage stores it" · "passes the resolved domain and the normalized filter to the pre-reserve query" |
+
+**M2'nin anlamı (Dilim 2 `audit_speed` B-5 sınıfı).** `withCredits`'e verilen tool adı hem defter satırının ETİKETİ hem TUTARIN kaynağıdır (`TOOL_COSTS[tool]`). Tutar tablosu iki testle pinli (M2b kırmızı), ama **o tablodan hangi satırın okunacağı** pinsiz: 10 kredilik bir okuma müşterinin `list_credit_activity` çıktısında `audit_schema · -5 credits` olarak görünebilir ve 3914 testin hiçbiri bunu görmez. Canlı ölçümde defter satırı doğru (`-10 credits · charge · keyword_positions`), yani bugün davranış doğru — kapı bakmıyor.
+
+**M3 + M3b'nin anlamı (NEVER#4).** Depo katmanı `getServiceClient()` kullanıyor, yani **RLS'i bypass ediyor**; dosyanın kendi başlığı bunu yazıyor (`keyword-positions-store.ts:15-16`, birebir): `NEVER #4: this client is service-role and bypasses RLS, so both statements carry their own` / `` `.eq("user_id", …)` ``. Bu iki filtre birim şeridinde **hiç koşmuyor** — `keyword-positions.test.ts` `deps.countMeasurements` / `deps.loadMeasurements` portlarını enjekte ediyor, gerçek sorgu kurucusu test edilmiyor. Sayım filtresinin (M3) ayrı bir sonucu daha var: **sayım, ücretsiz mi ücretli mi olduğunu belirleyen kapıdır** — kiracı filtresi olmadan başka bir kiracının aynı domain'i ölçmüş olması, bu kiracıya 10 kredilik bir çağrı açtırır ve "N readings match this filter in total" satırı çapraz-kiracı bir sayı basar. Tek koruma `keyword-positions.db.test.ts:274` `(f)` ve `:316` `(g)` — ve o şerit `make verify` kapsamında DEĞİL (CLAUDE.md komut tablosu: "DB şeritleri YOK").
+
+**M4'ün anlamı.** Deponun kendi başlığı bu mutasyonu ismen yasaklıyor (`keyword-positions-store.ts:8-13`, birebir): `The second is NEVER derived from the` / `first: a count taken from the rows in hand is a count of the window, and printing it as the` / `total is how a slice starts advertising itself as a census.` Biçimlendirici testleri `formatKeywordPositions`'ı elde yapılmış bir `window` nesnesiyle sürüyor, yani **handler'ın kabloyu doğru bağladığı** hiç sınanmıyor. Canlı S1 çağrısı tam bu satırı üretti: `1 reading in this window (limit 1, …). 3 readings match this filter in total — this window is the newest slice of that set`; M4 altında aynı çağrı `1 reading matches this filter in total` derdi ve dilim uyarısı kaybolurdu.
+
+**İş emrinin hipotezleri (ders 13).** İş emri üç mutasyon önerdi; üçünün de önermesi kısmen yanlış çıktı ve düzeltilerek koşuldu: (1) "SERP parser allowlist — bilinmeyen tip sessizce düşüyor mu" → düşüyor, ama bu **kasıtlı ve pinli** (M1 kırmızı; `rank_group` tip-başına olduğu için organik olmayanı saymak yanlış rank üretirdi); (2) "kelime başına ücret" → bu tool'da kelime başına ücret YOK, çağrı başına 10 sabit — eksen "ücret adı/tutarı pinli mi"ye çevrildi (M2/M2b); (3) "kiracı filtresi (`tracked_keywords` okuma)" → bu tool `tracked_keywords`'ü **hiç okumuyor**, kiracı ekseni `keyword_position_measurements`'a çevrildi (M3/M3b).
+
+Çalışma ağacı sonunda temiz: `git status --short` → **boş çıktı**; `git diff --stat` → **boş çıktı**. Revert sonrası mcp 147/147 · 3914/3914 · exit 0.
+
+## 3. Canlı negatif yol
+
+Hedef proje: adstark.com.tr (`e2785bf7-…`, `list_projects`'ten). Arşivli proje `4f3eb00a-…` aynı yerden.
+**Kredi Δ defter satırından okundu** (bakiye paralel işçiler yüzünden düşüyordu: 4277 → 4242 → 4217 — hepsi başka tool'ların satırları). `list_credit_activity` çıktısında **17 negatif senaryonun hiçbiri için `keyword_positions` satırı yok**.
+
+| senaryo | argüman | HTTP / envelope | kredi Δ | gözlem |
+|---|---|---|---|---|
+| N1 özne yok | `{}` | 200, `isError:true` | 0 | `Nothing to look up: pass "project_id" … or "target" …. You were not charged.` |
+| N2 iki özne | `target` + `project_id` | 200, `isError:true` | 0 | `Pass "project_id" or "target", not both — they can name different domains and SeoGrep will not guess which one you meant.` — **öncelik kuralı YOK, ret var** |
+| N3 bozuk uuid | `project_id:"not-a-uuid"` | 200, `isError:true` | 0 | `✖ Invalid UUID → at project_id` + `You were not charged.` |
+| N4 bilinmeyen proje | `00000000-0000-4000-8000-000000000000` | 200, `isError:true` | 0 | `No project found with id … Run list_projects …` — başka kiracının id'siyle bayt-özdeş |
+| N5 arşivli proje | `4f3eb00a-…` | 200, `isError:true` | 0 | `That project is archived … Restore it with setup_project for the same domain … or with track_gsc_property …` (ders 14'te düzeltilen ortak sabit) |
+| N6 şema dışı anahtar | `{project_id, keywords:["adstark"]}` | 200, `isError:true` | 0 | `✖ Unrecognized key: "keywords"` — **`additionalProperties:false` canlıda etkin**; yazım hatası sessizce yutulmuyor |
+| N7 limit 0 | `limit:0` | 200, `isError:true` | 0 | `✖ Too small: expected number to be >=1 → at limit` |
+| N8 limit 201 | `limit:201` | 200, `isError:true` | 0 | `✖ Too big: expected number to be <=200 → at limit` — **üst sınır tam 200, şema seviyesinde** |
+| N9 limit 1.5 | `limit:1.5` | 200, `isError:true` | 0 | `✖ Invalid input: expected int, received number → at limit` |
+| N10 geçersiz device | `device:"tablet"` | 200, `isError:true` | 0 | `✖ Invalid option: expected one of "desktop"\|"mobile" → at device` |
+| N11 kısa dil kodu | `language_code:"t"` | 200, `isError:true` | 0 | `✖ Too small: expected string to have >=2 characters → at language_code` |
+| N12 boş keyword | `keyword:""` | 200, `isError:true` | 0 | `✖ Too small: expected string to have >=1 characters → at keyword` |
+| N13 boş target | `target:""` | 200, `isError:true` | 0 | `✖ Too small: expected string to have >=1 characters → at target` |
+| **N14 ön koşul — saklanmamış (filtresiz)** | `{project_id: adstark}` | 200, `isError:true` | **0** | `No stored SERP measurement matches this request for your project "adstark.com.tr", so there is nothing to read and you were not charged. Positions appear here once a SERP snapshot has been taken for these keywords; track_keywords records which keywords to watch, which is a separate step and also free.` — **hangi tool'a yönlendiriyor: `track_keywords`. Yanlış adres** (F-3) |
+| N15 ön koşul — filtreli | + `keyword/location/language/device` | 200, `isError:true` | 0 | Aynı metin + `This answer is about the keyword, location, language and device you filtered on — measurements may exist for this domain under a different one.` — filtre şerhi doğru ekleniyor |
+| N16 hiç ölçülmemiş bare target | `target:"bu-domain-kesinlikle-yok-9f3a2c.com"` | 200, `isError:true` | 0 | Aynı ret; **`target` yolu proje okumadan çalışıyor**, ve varlık/yokluk sızdırmıyor |
+| N17 domain olmayan target | `target:"!!!"` | 200, `isError:true` | 0 | `"!!!" is not a valid domain — expected a host like "example.com". You were not charged.` |
+
+**"1000 kelimelik liste / üst sınır" (statik, çağrılmadı).** Bu tool'da **liste argümanı yok** — `keyword` tekil ve opsiyonel. Cevabın boyut sınırı `limit` (1-200, `MAX_POSITION_WINDOW = 200`, `keyword-positions.ts:63`) ve yorumun kendi ifadesiyle `A bound on the ANSWER's size, not on what is stored.` Depoda kaç satır olduğunun üst sınırı yok; N8 sınırın tam 200'de olduğunu doğruladı.
+
+**Refund çifti ÖLÇÜLDÜ ve YOK — doğru olan da bu.** Her ret `withCredits`'ten ÖNCE dönüyor (`keyword-positions.ts:173, 188`), yani ledger'a ne charge ne refund yazılıyor. `audit_content`/`analyze_content_decay` gibi tool'ların defterde gördüğümüz `-10 / +10` çiftinin karşılığı burada **hiç satır yok**; NEVER#2 açısından daha temiz olan davranış budur.
+
+## 4. Canlı mutlu yol
+
+### 4a. Kayıt ekseni — `track_keywords` bu tool'u etkiliyor mu (0 kredi)
+
+İş emri gereği adstark.com.tr'de 2 GERÇEK kelime (`adstark`, `dijital reklam yönetimi`, `Turkiye · tr · desktop`) eklendi ve ölçüm sonunda geri alındı.
+
+| adım | tool | envelope | kredi Δ | çıktı özeti |
+|---|---|---|---|---|
+| H0 | `track_keywords action:"list"` | 200, başarı | 0 | `"adstark.com.tr" is not tracking any keywords right now.` — Dilim 1'in bıraktığı durum (arşivli) teyit |
+| H1 | `track_keywords` (2 kelime) | 200, başarı | 0 | `Tracked again (the earlier record came back, so nothing about them was lost)` — Dilim 1'in arşiv satırları diriltildi |
+| H2 | `track_keywords action:"list"` | 200, başarı | 0 | `"adstark.com.tr" is tracking 2 keywords … Turkiye · language tr · desktop SERP: "adstark", "dijital reklam yönetimi"` |
+| **H3** | **`keyword_positions`** (aynı kelime/kimlik) | 200, **`isError:true`** | **0** | Aynı "nothing stored" reddi. **Kayıt, okumayı hiç etkilemiyor** — bu tool `tracked_keywords`'e bakmıyor |
+| H4 | `track_keywords action:"untrack"` | 200, başarı | 0 | `Stopped tracking 2 keywords …` |
+| H5 | `track_keywords action:"list"` | 200, başarı | 0 | `… is not tracking any keywords right now.` — ölçüm öncesi hâle dönüldü |
+
+H3, `scripts/testing/plan.mjs:140`'ın gerekçesini **olgusal olarak çürütüyor** (F-6).
+
+### 4b. Ücretli okuma — veri VAR dalı
+
+Hedef `dentnotion.com` seçildi çünkü defterin **tamamı tarandı** (12 sayfa × 50 satır, `list_credit_activity`, 0 kredi) ve `serp_snapshot`'ın ürün tarihindeki **tek üç çağrısı** bulundu: `2026-08-25T15:53/15:54/15:55 · -13 credits · charge · serp_snapshot · project not recorded`. Aynı tarihli defter kaydı (`docs/plans/2026-08-25-tool-revizyon-defteri.md:97`) o üç çağrının **üçünün de `status='not_measured'`** ürettiğini yazıyor.
+
+| senaryo | argüman | envelope | kredi Δ (defterden) | çıktı özeti |
+|---|---|---|---|---|
+| **P1 tam okuma** | `{target:"dentnotion.com"}` | 200, başarı | **−10** (`-10 credits · charge · keyword_positions · no project scope`) | `3 readings in this window (limit 50, newest first), across 3 keyword/locale/device series. 3 readings match this filter in total.` — üç ayrı seri: `"teeth whitening istanbul" … United States · language en · desktop SERP · google · depth 100 · matched by exact_host_www_stripped`, `"diş beyazlatma" … Turkiye · tr`, `"diş beyazlatma" … **Turkey** · tr`. **Üçü de** `NOT MEASURED: …` |
+| **P2 ikinci çağrı** | `{target:"dentnotion.com", limit:1}` | 200, başarı | **−10** (ikinci `keyword_positions` satırı) | `1 reading in this window (limit 1, newest first), across 1 keyword/locale/device series. 3 readings match this filter in total — this window is the newest slice of that set, and an older reading of a series may sit outside it.` |
+
+**Toplam ücretli çağrı: 2 · toplam kredi Δ: −20** (iş emri tavanı: 2 çağrı / 20 kredi). Bakiye yan kanıtı: 4197 → 4187 (yalnız P2 aralığında; P1 aralığında paralel işçilerin satırları da düştü).
+
+**Ölçülen çıktı gerçekleri:**
+
+1. **Önbellek YOK, ikinci çağrı yeniden ücretlendiriliyor.** İki saniyelik arayla aynı domain'e yapılan ikinci okuma defterde ikinci bir `-10` satırı açtı. Vendor'a gidiş yok (zaten hiç yok), fakat aynı saklı satırları ikinci kez okumak da tam ücret.
+2. **`NOT MEASURED` metni ölçüldü, birebir:** `2026-08-25T15:56:05.199+00:00 — NOT MEASURED: The operation was aborted due to timeout. The position is unknown; nothing was examined, so this is not a statement that the domain is absent.` ve `… NOT MEASURED: DataForSEO task failed (status 40501): Invalid Field: 'location_name'..` (çift nokta vendor metninin kendi noktasından geliyor — kozmetik).
+3. **Saat ayrımı canlıda:** `DataForSEO did not report when it measured; the time above is SeoGrep's own clock at the moment the response arrived.`
+4. **`Turkey` ve `Turkiye` İKİ AYRI SERİ olarak basılıyor** — aynı kelime, aynı dil, aynı cihaz. Doğru davranış (lokasyon kimliğin parçası), ama `Turkey` vendor'ın **reddettiği** bir addır: reddedilmiş bir lokasyon adı kalıcı bir seri başlığı olarak yaşıyor (F-8).
+5. **Pozisyon, URL ve SERP özelliği çıktıda YOK.** Üç satırın üçü de `not_measured` olduğu için `rank_group` dalı canlıda ÖLÇÜLEMEDİ. URL ve `item_types` ise **hiçbir durumda** basılmıyor — bkz. 5. adım ve F-5.
+6. **Kapanış notu sağlayıcıyı adıyla anıyor** (birebir): `Ranks are DataForSEO's own \`rank_group\` (organic-only) and \`rank_absolute\` (all SERP elements); SeoGrep computes no score, no visibility figure and no ranking of its own.`
+
+**"Position" GSC ortalamasıyla karıştırılıyor mu (iş emrinin sorusu).** Tool'un kendi metninde **karıştırılmıyor**: hiçbir yerde "average position" geçmiyor, sayı her zaman `rank_group #N` adıyla basılıyor, ve `grep -iE "search console|gsc|average"` bu tool'un kaynak + docs yüzeyinde **0 eşleşme** veriyor. Kusur, **ayrımın hiç söylenmemesi**: aynı üründe `find_quick_wins` `position 12.3` (GSC ortalaması, ondalıklı) basıyor ve o da `keyword_positions`'ı hiç anmıyor (F-4).
+
+### Yapılan kalıcı değişiklikler
+
+| ne | nerede | son durum |
+|---|---|---|
+| `adstark` | `tracked_keywords`, adstark.com.tr · `Turkiye` · `tr` · `desktop` | **arşivli** (H4 ile `untracked_at` damgalandı) — ölçüm öncesi hâliyle aynı; H0 ve H5 çıktıları birebir aynı cümle |
+| `dijital reklam yönetimi` | aynı kimlik | **arşivli** (H4) |
+| kredi bakiyesi | `credit_ledger` | **−20** (iki `keyword_positions · charge` satırı, ikisi de `no project scope`) — geri alınamaz, iş emri tavanı içinde |
+| `keyword_position_measurements` | — | **DEĞİŞMEDİ** — bu tool yalnız okur; `serp_snapshot` **çağrılmadı** |
+| başka | — | Ücretli hiçbir başka tool çağrılmadı. Kaynak/test değişikliği kalmadı (`git status --short` boş) |
+
+Ham kayıt: `/private/tmp/claude-501/-Users-apple-dev-pseo-web-saas/37f05938-81d4-4e04-a911-d0ea9b56d81c/scratchpad/dilim3/d3-positions/out.jsonl` — 52 kayıt, anahtar `makeRedactor(MCP_SMOKE_URL)` ile redakte (redaksiyon doğrulandı: dosyada redakte edilmemiş `sg_` yok).
+
+## 5. SEO güncelliği
+
+| kural | tool'da nasıl görünüyor | uyum | not |
+|---|---|---|---|
+| **R-6.5** (Google'a otomatik sorgu ToS ihlalidir; SERP çekimi vendor üzerinden olmalı) | Tool hiçbir motora gitmiyor ve bunu iki yerde söylüyor: description (`It measures nothing and contacts no search engine`) ve her cevabın kapanışı (`no search engine was contacted for this answer and no new position was read`). Ölçümü kimin yaptığı da **adıyla** yazılı: `Ranks are DataForSEO's own rank_group … and rank_absolute …` | **UYUYOR** | `track_keywords`'ün F-9 açığı (sağlayıcının adının kullanıcıya söylenmemesi) burada **kapalı** — aynı ailede iki tool, iki farklı olgunluk. Ölçüm zinciri: `serp_snapshot` → DataForSEO `/v3/serp/google/organic/live/advanced` (`dfs/serp.ts:102`), yani Google'a doğrudan otomatik sorgu üründe hiçbir yerden çıkmıyor |
+| **R-7.11** ("position" = GSC'de sitenin en üstteki sonucunun ORTALAMA pozisyonu) | Bu tool "position" kelimesini **tanım olarak** kullanmıyor: sayı her zaman `rank_group #N` / `rank_absolute N` adıyla, vendor'ın alan adlarıyla basılıyor; `not position 0` cümlesi de yokluğun pozisyon olmadığını söylüyor. Fakat tool'un **ADI** `keyword_positions`, docs başlığı `SERP positions`, ve aynı üründe `find_quick_wins` `position 12.3` (GSC ortalaması) basıyor | **AYKIRI** — tanım karışması ürün düzeyinde açık | `grep -iE "search console\|gsc\|average"` bu tool'un kaynak+docs yüzeyinde **0 eşleşme**; ters yönde `find-quick-wins` yüzeyinde `keyword_positions` **0 eşleşme**. İki "position" birbirini hiç anmıyor: biri 90 günlük ortalama ve ondalıklı, öbürü tek bir anın tam sayısı. Referans listesinin bu tool için öngördüğü risk (`"Position" tanımının GSC ile SERP API arasında karıştırılması`) **karşılığını buluyor** (F-4) |
+| **R-8.6** (28 Ağu 2026 — DFS doğrudan hedef URL çözümlemesi; Google "goto" URL'lerini ayrıştıran kod bayatlamıştır) | `grep -iE "goto\|/url\?q=\|google\.com/url\|redirect"` → SERP portu, snapshot ve positions kaynaklarında **0 eşleşme**. Port `url` ve `domain` alanlarını vendor'dan **verbatim** alıyor (`toPlacement`, `serp.ts:611`), ve domain eşleştirmesi URL'i hiç ayrıştırmadan `item.domain` üzerinden yapılıyor (`outcomeFor`, `serp.ts:656-657`) | **UYUYOR** | Bayatlayacak kendi ayrıştırıcımız YOK — referansın bu tool için işaret ettiği risk **karşılıksız**, ve bu iyi haber. **Şerh:** vendor'ın iyileştirdiği `url` alanı `SerpPlacement.url` olarak taşınıyor, `serp_snapshot`'ın çıktısında basılıyor (`serp-snapshot-format.ts:61`), `report` jsonb'sine yazılıyor — fakat `keyword_positions`'ın kolon projeksiyonu (`keyword-positions-store.ts:73`) `report`'u **almıyor**, yani sıralayan URL bu tool'dan hiç okunamıyor (F-5) |
+| **R-8.5** (yeni item type'lar: `ai_overview_expanded_element`, `ai_overview_video_element`, `ai_overview_table_element`) | Port yalnız `type === "organic"` öğelerini sayıyor (`ORGANIC_ITEM_TYPE`, `serp.ts:608`); bu **kasıtlı ve doğru** (`rank_group` tip-başınadır, bir AI Overview bloğunu organik saymak var olmayan bir sıra üretir) ve M1 ile **pinli** olduğu ölçüldü. Vendor'ın hangi özellikleri döndürdüğü `item_types` olarak yakalanıyor (`observationFrom`, `serp.ts:693`) ve `report` jsonb'sine yazılıyor (`serp-snapshot-store.ts:134`) | **AYKIRI** — yakalanan bilgi hiçbir yüzeye çıkmıyor | `grep -i "item_types"` → `serp-snapshot-format.ts` **0 eşleşme**, `keyword-positions-format.ts` **0 eşleşme**, web Rankings sayfası `report`'u kasten okumuyor (`ranking-history.ts:147` — `SCALARS ONLY`). Yani AI Overview varlığı **ölçülüyor, saklanıyor, parası ödeniyor ve hiç okunmuyor** (F-5) |
+| **R-5.5** (AI özellikleri "query fan-out" kullanır; tek anahtar kelimeye bakan ölçüm bu davranışı yakalayamaz) | Tool tek kelime × tek lokasyon × tek cihazın organik sırasını raporluyor; AI Overview'un varlığından, kaç kaynak gösterdiğinden ya da fan-out'tan hiç söz etmiyor | **AYKIRI (kısmi)** | R-5.5 referansta `ai_visibility`/`serp_snapshot` satırlarına yazılmış; `keyword_positions` satırında **yok**. Ölçüldüğünde bu tool tam olarak referansın uyardığı şeyi yapıyor: bir AI Overview'un sayfayı kapladığı bir SERP'te `rank_group #3` demek, kullanıcının gördüğü şeyi anlatmıyor — ve veri elde olduğu hâlde söylenmiyor. Referans eşlemesine `R-5.5` eklenmeli (F-9) |
+| R-8.3 (DFS saklama: JSON 30 gün / HTML 7 gün) | Tool DFS'e hiç sormuyor; **kendi** tablomuzu okuyor ve o satırların süresi yok — canlıda **9 gün önceki** (2026-08-25) satırlar sorunsuz okundu | **İLGİSİZ** | Ters yönde bir gözlem: `keyword_position_measurements` için **hiçbir temizleyici/saklama politikası yok** (`grep` → tabloyu yazan tek yer `serp-snapshot-store.ts`, silen yer yok). Bugün 3 satır olduğu için sorun değil; `limit` tavanı 200, sayım `head:true` ile yapıldığı için ölçeklenir |
+| Bayatlatan 10 madde | `grep -niE "crawl budget\|indexnow\|indexing api\|llms\.txt\|faq\|howto\|noarchive\|disavow\|FID \|60 char\|160 char"` → tool kaynağı, biçimlendirici, depo ve docs sayfasında **NO MATCH** | **UYUYOR** | Bu tool SEO tekniği değil, ölçüm semantiği anlatıyor |
+
+**Doğru olduğu ölçülen SEO iddiaları.** Tool arama motoru davranışı hakkında üç iddiada bulunuyor ve üçü de referansla çelişmiyor:
+1. `desktop and mobile are different SERPs and are never folded into one series` — R-3.14 mobile-first indexing ile tutarlı; ayrıca `serp_snapshot`'ın aynı iddiasıyla aynı.
+2. `a position is a measurement at a moment, not a property of a site` — referans listesinde bu iddiayı doğrulayan ya da çürüten bir kural **yok — listede yok**; fakat R-7.11'in ortalama-pozisyon tanımıyla uyumlu bir ihtiyat.
+3. `rank_group` (organic-only) ile `rank_absolute` (all SERP elements) ayrımı ve **birbirine çevrilmemesi** — DataForSEO'nun kendi alan tanımları; R-8.5/R-8.6'nın ait olduğu vendor sözleşmesiyle tutarlı, ve `renderInterval` iki ölçeği asla birbirinden çıkarmıyor.
+
+## 6. Kart (MCP Apps)
+
+`apps/mcp/src/ui/card-map.ts` eşlemesi: **VAR** — `card-map.ts:20` → `keyword_positions: "list"`.
+`card-map.ts:62` → `CARDED_TOOLS = new Set(["get_credit_balance"])` — PLANLI, henüz SEVK EDİLMEMİŞ.
+Canlı doğrulama: **20 `keyword_positions` çağrısının hiçbirinde `structuredContent` yok**; aynı oturumda 5 `get_credit_balance` çağrısının **5'i de** `structuredContent` döndürdü (`{card, summary}`). Plan ↔ canlı **tutarlı**.
+Canlı payload bir "list" kartının beklediği alanları taşıyor mu: **ÖLÇÜLEMEDİ** — çıktı bugün tek parça `content[0].text`. Kart geldiğinde ayrık alanlar hazır: `groupIntoSeries` seri listesini, `renderWindowCaption` pencere↔toplam çiftini, `StoredMeasurement` 16 alanlı satırı ayrı ayrı üretiyor. **Kart tasarımına şerh:** bugün `rank_group`/`rank_absolute`/`status` üçlüsü metne gömülü; bir "list" kartı bunları sütunlaştırırsa üç sonucun ayrı tutulması kuralı (`keyword-positions-format.ts:22-39`) kartta yeniden kurulmalıdır — sıralanabilir bir "position" sütunu `not_measured` satırlarını sessizce boşa çevirir.
+
+## 7. Kanıt üçlüsü
+
+- Bu dosya: ✔
+- `scripts/testing/plan.mjs` PLAN girişi: **YOK — `EXCLUDED`'da, ve gerekçesi olgusal olarak YANLIŞ.** `plan.mjs:140` birebir: `keyword_positions: "paid, 10 credits/call, and it only returns anything for keywords track_keywords registered first — which is itself excluded above.",` — canlı H3 ölçümü bunu çürüttü: kayıt yapıldıktan sonra bile `keyword_positions` "nothing stored" dedi, çünkü tool `tracked_keywords`'ü **hiç okumuyor**; ön koşul `serp_snapshot`'tır (F-6).
+- `goals/` hedefi gerekli mi: **EVET** — üç ayrı eksende. (a) M2 için: ücretin defterde tool'un KENDİ adıyla ve tablodaki tutarla yazıldığını pinleyen bir hedef; (b) M3/M3b için: her iki sorgu kurucusunun `.eq("user_id", …)` çağrısını yaptığını Docker'sız iddia eden bir hedef (uygulanan filtreleri KAYDEDEN sahte kurucu — CLAUDE.md ders 12'nin "filtreleri kaydedip UYGULAMAYAN sahte kurucu" vakasının tersi); (c) M4 için: handler'ın `storedMeasurementCount`'u sayım sorgusundan aldığını, `rows.length`'ten almadığını pinleyen bir hedef.
+
+## Bulgular
+
+| # | şiddet (P0/P1/P2) | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, YYYY-MM-DD) |
+|---|---|---|---|---|---|
+| F-1 | **P1** | Ücretin defterdeki ADI ve TUTARI çağrı yerinde pinsiz. `withCredits`'e verilen tool adı hem etiketi hem tutarı belirler; adı başka bir tool'unkiyle değiştirmek 3914 testin hiçbirini kırmıyor. Müşterinin `list_credit_activity`'de gördüğü satır sessizce yanlış tool'u ve yanlış tutarı gösterebilir | M2: `keyword-positions.ts:200` → `{ tool: "audit_schema" }` (5 kredi) → 147/147 dosya · 3914/3914 test · exit 0. Karşıtı M2b: `costs.ts:168`'i 10→9 yapmak İKİ testi kırıyor — **tablo pinli, çağrı yeri değil** | Her `charge:"handler"` tool'u için "kendi adına ücretlendirir" iddiasını pinleyen bir hedef; `withCredits` çağrısındaki tool adının `defineTool`'daki `name` ile aynı olduğunu iddia eden tek bir yapısal kontrol daha ucuz olabilir (yüzey geneli, 38 tool). Dilim 2 `audit_speed` B-5 ile aynı sınıf | |
+| F-2 | **P1** | NEVER#4 kiracı filtrelerinin **ikisi de** Docker'sız hiçbir kapıda korunmuyor. Depo service-role client kullanıyor (RLS bypass) ve dosyanın kendi başlığı `both statements carry their own .eq("user_id", …)` diyor; her iki `.eq` ayrı ayrı silindiğinde suite ve `tsc` temiz kalıyor. Sayım filtresinin silinmesinin ek sonucu: **sayım ücretsiz/ücretli kararını veren kapıdır** — başka bir kiracının aynı domain'i ölçmüş olması bu kiracıya 10 kredilik bir çağrı açtırır ve toplam satırı çapraz-kiracı bir sayı basar | M3 (`keyword-positions-store.ts:104`) ve M3b (`:120`) — ikisi de 147/147 · 3914/3914 · `tsc --noEmit` temiz. Tek koruma `keyword-positions.db.test.ts:274 (f)` ve `:316 (g)`, ve o şerit `make verify` kapsamında DEĞİL | Birim şeridindeki sahte sorgu kurucusu uygulanan `.eq` çağrılarını KAYDETSİN ve test `user_id` filtresinin varlığını iddia etsin; ya da `goals/` altına Docker istemeyen bir hedef. `track_keywords` F-1'in aynı sınıfı, bir tool ötede ve **iki konumda** | |
+| F-3 | **P1** | Ön koşul reddi **yanlış tool'a yönlendiriyor.** `nothingStoredMessage` yalnız `track_keywords`'ü adlandırıyor; eksik adım aslında `serp_snapshot`'tır (5+8/kelime). Kullanıcı önerilen ücretsiz adımı atar, hiçbir şey değişmez ve aynı redde döner — canlıda tam olarak bu döngü ölçüldü (H1→H3). Docs sayfası doğru tool'u adlandırıyor, tool metni adlandırmıyor | N14/N15/N16 canlı metni (birebir yukarıda) ↔ `keyword-positions.ts:119-130` ↔ `keyword-positions.mdx` zincir cümlesi ↔ canlı H1→H3 dizisi | Ret metni `serp_snapshot`'ı ADIYLA ve ücretli olduğunu belirterek yazsın; `track_keywords` "ayrıca ve ücretsiz" olarak kalabilir. Ders 14'ün "eksen: hangi mesaj" değil "hangi tool adlandırılıyor" hâli | |
+| F-4 | **P1** | **R-7.11 — aynı üründe iki farklı "position", hiçbir yüzey ikisini ayırmıyor.** `keyword_positions` tek bir anın SERP sırasını (`rank_group #4`, tam sayı) verir; `find_quick_wins` GSC'nin 90 günlük ortalamasını (`position 12.3`, ondalıklı) verir. Bir kullanıcı ikisini yan yana koyup "sıralamam düştü" sonucuna varabilir; iki sayı farklı tanımların ürünüdür | `grep -iE "search console\|gsc\|average"` → `keyword-positions*.ts` + `keyword-positions.mdx`'te **0 eşleşme**; ters yönde `find-quick-wins.ts` + `.mdx`'te `keyword_positions` **0 eşleşme**. `find-quick-wins.ts:124` → `position ${pos(anchor.position)}` | İki tool'un docs sayfalarına karşılıklı birer cümle: "bu sayı Search Console'un ortalama pozisyonu DEĞİLDİR / bu sayı bir SERP anının sırası DEĞİLDİR". `STORED_READ_NOTE`'a tek cümle eklemek de yeter. **Metin değişikliği — imza gerektirebilir** | |
+| F-5 | **P1** | **Ölçülen, saklanan ve parası ödenen veri okunamıyor: URL ve SERP özellikleri (AI Overview dahil).** Sıralayan sayfanın URL'i (`SerpPlacement.url`) ve vendor'ın `item_types` listesi `report` jsonb'sine yazılıyor; `keyword_positions`'ın kolon projeksiyonu `report`'u almıyor, `serp_snapshot`'ın biçimlendiricisi `item_types`'ı basmıyor, web Rankings sayfası `report`'u kasten okumuyor. Sonuç: **AI Overview varlığı üründe hiçbir yerden görülemiyor** (R-5.5/R-8.5), ve 10 kredilik okuma hangi URL'in sıralandığını söylemiyor | `keyword-positions-store.ts:73` (`COLUMNS`, `report` yok) ↔ `serp-snapshot-store.ts:134` (`item_types: row.observed.vendor_item_types`) ↔ `0030_rank_tracking.sql:313` (`report jsonb not null`) ↔ `ranking-history.ts:147` (`SCALARS ONLY`). `grep -i item_types` → `serp-snapshot-format.ts` ve `keyword-positions-format.ts`'te 0 eşleşme | Tek kelimeye daraltılmış okumada opsiyonel bir `include_report` (ya da doğrudan `url` + `item_types`'ın kolonlaştırılması). Sayfa çok satır okuduğu için `report`'u atlaması doğru; `limit ≤ 200` olan bu tool aynı gerekçeyi taşımıyor. **R-5.5 açısından en az `item_types` içindeki `ai_overview*` varlığının tek satırla raporlanması** | |
+| F-6 | P2 | `scripts/testing/plan.mjs:140`'ın `EXCLUDED` gerekçesi olgusal olarak yanlış: `it only returns anything for keywords track_keywords registered first`. Tool `tracked_keywords` tablosunu hiç okumuyor; ön koşul `serp_snapshot`'ın yazdığı `keyword_position_measurements` satırlarıdır. Kapsam listesi bugün doğru (tool gerekçeli EXCLUDED'da) ama gerekçe okuru yanlış zincire yönlendiriyor | Canlı H1→H3 (kayıt yapıldı, okuma yine "nothing stored" dedi) ↔ `keyword-positions-store.ts:102,118` (tek okunan tablo) ↔ `plan.mjs:140` | Gerekçe `serp_snapshot`'a bağlansın: "paid, 10 credits/call, and it only returns anything for domains `serp_snapshot` has measured — which is itself excluded above." **Bu bir harness metni düzeltmesidir** | |
+| F-7 | P2 | 10 kredi yalnız `count > 0` şartına bağlı; **bilgi taşımayan satırları okumak da tam ücret.** Canlıda ölçülen tam olarak bu: `dentnotion.com`'un 3 satırının 3'ü de `not_measured` ve iki çağrı 20 kredi yaktı. Handler'ın kendi yorumu ücretsiz kapının gerekçesini yazıyor (`keyword-positions.ts:48`, birebir): `NOTHING STORED IS A FREE ANSWER. Charging 10 credits to be told that a store is empty would be charging for nothing at all` — aynı mantık "depoda yalnız ölçülememişler var" hâli için kurulmamış | Canlı P1 + P2 (`-10` × 2, üç satırın üçü de `NOT MEASURED`) ↔ `keyword-positions.ts:48-52, 186-197` | Ücretsiz kapı `count > 0` yerine "en az bir `ranked` ya da `absent_from_examined_results` satırı var mı"ya bakabilir; ya da yalnız-`not_measured` cevabı ücretsiz ret olarak dönebilir. **Ücretlendirme davranışı değişikliği — operatör imzası** (NEVER#6 tutarı değil davranışı, yine de para) | |
+| F-8 | P2 | Vendor'ın **reddettiği** bir lokasyon adı kalıcı bir seri başlığı olarak yaşıyor. `"diş beyazlatma" … **Turkey** · language tr` serisi, DataForSEO'nun `Invalid Field: 'location_name'` dediği çağrıdan doğdu; okuyucuya `Turkiye` serisinin yanında eşdeğer bir kimlikmiş gibi görünüyor. Seri sayısı da şişiyor (`across 3 … series`, oysa gerçek kimlik 2) | Canlı P1 çıktısı (iki `diş beyazlatma` serisi, `Turkey` ve `Turkiye`) ↔ aynı satırın `not_measured_reason`'ı | Yazma tarafında (`serp_snapshot`) vendor'ın reddettiği lokasyon adıyla satır AÇILMAMASI, ya da okuma tarafında `not_measured` serisinin başlığında reddin lokasyon adına ait olduğunun belirtilmesi. `track_keywords` F-5'in (dil kodu doğrulanmıyor) lokasyon eksenindeki kardeşi | |
+| F-9 | P2 | Referans listesinin `keyword_positions` satırı (`docs/reference/2026-09-02-seo-referans-listesi.md:254`) `R-6.5, R-7.11, R-8.6` diyor. Ölçüldüğünde: R-8.6 **karşılıksız** (bayatlayacak "goto" ayrıştırıcısı yok), buna karşılık **R-5.5 ve R-8.5 karşılığını buluyor** (F-5) ve satırda yok | 5. adım tablosu; `grep -iE "goto\|url\?q=\|redirect"` → 0 eşleşme | Satır `R-6.5, R-7.11, R-5.5, R-8.5` olsun; R-8.6'ya "İLGİSİZ, ölçüldü 2026-09-03: kendi URL ayrıştırıcısı yok" şerhi düşülsün. **Referans listesi düzeltmesi, kod değil** — `track_keywords` F-6 ile aynı sınıf, ve o bulgu hâlâ AÇIK (hiçbir PR bu dosyaya dokunmadı) | |
+| F-10 | P2 | Tool ürün tarihinde **ilk kez bu turda ücretli olarak servis etti.** Defter özeti çağrıdan önce `across 24 tools`, sonra `across 25 tools`; ve `keyword_positions`'ın "veri var" dalı 2026-08-25 defterinde de "üretimde hiç görünmemiş" diye kayıtlıydı. Sıralama zincirinin (`track_keywords` → `serp_snapshot` → `keyword_positions` → `/app/rankings`) ürettiği tek veri hâlâ 3 adet `not_measured` satırı | `list_credit_activity` özet satırı (öncesi/sonrası) ↔ tam defter taraması (12 sayfa: `serp_snapshot` yalnız 3 kez, 2026-08-25) ↔ `docs/plans/2026-08-25-tool-revizyon-defteri.md:86,97` | `serp_snapshot`'ın `max_crawl_pages`/timeout kök nedeni (aynı defter, kart 98) kapanmadan bu tool'un `ranked` dalı hiçbir yerde ölçülemez. **Bu bulgu `keyword_positions`'ın kusuru değil, kapsamının sınırı** — `ranked` dalının canlı doğrulaması `serp_snapshot` onarımına bağımlı | |
+| F-11 | P2 | `describeFilter` hiçbir filtre yokken `No filter was applied, so every keyword … is in scope.` diyor, ama pencere başlığı yine `N readings match this **filter** in total` diyor — aynı cevapta "filtre yok" ve "bu filtre" yan yana | Canlı P1 ve P2 çıktıları (ikisinde de her iki cümle var) ↔ `keyword-positions.ts:139-142` ↔ `keyword-positions-format.ts:263-265` | Filtresiz durumda başlık `match this domain in total` desin. Kozmetik ama iki çağrının ikisinde de göründü | |
