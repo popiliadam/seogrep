@@ -8,7 +8,12 @@ import {
   type BacklinkProfile,
 } from "../dfs/backlinks.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
-import { formatBacklinkProfile, makeAnalyzeBacklinksTool } from "./analyze-backlinks.ts";
+import {
+  MAX_RENDERED_OUTPUT_CHARS,
+  TWO_ENDPOINT_COUNT_NOTE,
+  formatBacklinkProfile,
+  makeAnalyzeBacklinksTool,
+} from "./analyze-backlinks.ts";
 import summaryFixture from "../dfs/fixtures/backlinks-summary.json";
 import referringDomainsFixture from "../dfs/fixtures/backlinks-referring-domains.json";
 import anchorsFixture from "../dfs/fixtures/backlinks-anchors.json";
@@ -47,6 +52,7 @@ const FULL_PROFILE: BacklinkProfile = {
     referring_domains_nofollow: 1458,
     referring_main_domains: 11004,
     broken_backlinks: 118,
+    referring_links_attributes: { nofollow: 4120, noopener: 2210, sponsored: 88 },
   },
   top_referring_domains: {
     total_count: 12372,
@@ -66,17 +72,45 @@ describe("formatBacklinkProfile", () => {
     expect(formatBacklinkProfile(FULL_PROFILE)).toBe(
       'Backlink profile for "example.com":\n' +
         "• Backlinks: 41,245\n" +
+        "• Link attributes (DataForSEO referring_links_attributes): nofollow 4,120 · " +
+        "noopener 2,210 · sponsored 88\n" +
         "• Referring domains: 12,372 — 10,914 dofollow-only (88%)\n" +
         "• Referring main domains: 11,004\n" +
         "• Broken backlinks: 118\n" +
         "• Backlink spam score: 8\n" +
         "• Domain rank: 371 of 1,000\n\n" +
+        `${TWO_ENDPOINT_COUNT_NOTE}\n\n` +
         "Top referring domains (2 of 12,372):\n" +
         "• seoblog.example — 9,864 backlinks, rank 302, backlinks_spam_score 6\n" +
         "• news.example — 1,204 backlinks, rank 218, backlinks_spam_score 11\n\n" +
         "Top anchors (1 of 83,736):\n" +
         '• "example" — 4,186 backlinks',
     );
+  });
+
+  /**
+   * AB-3: the summary count and the list count are two SEPARATE vendor measurements — measured
+   * live on 2026-09-04, two characters apart, disagreeing: `Referring domains: 139` under
+   * `Top referring domains (137)`. Neither number is wrong; the reply simply never said they came
+   * from two endpoints, so the pair read as one figure printed twice.
+   */
+  it("names both DataForSEO endpoints when it prints two referring-domain counts", () => {
+    const text = formatBacklinkProfile(FULL_PROFILE);
+    expect(text).toContain("/backlinks/summary/live");
+    expect(text).toContain("/backlinks/referring_domains/live");
+    expect(text).toContain("neither confirms the other");
+    // The note belongs to the LIST, so it stands between the summary and the list header.
+    expect(text.indexOf("• Referring domains:")).toBeLessThan(text.indexOf(TWO_ENDPOINT_COUNT_NOTE));
+    expect(text.indexOf(TWO_ENDPOINT_COUNT_NOTE)).toBeLessThan(text.indexOf("Top referring domains ("));
+  });
+
+  it("still names the two endpoints when DataForSEO returned no referring domain at all", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      top_referring_domains: { total_count: 0, rows: [] },
+    });
+    expect(text).toContain(TWO_ENDPOINT_COUNT_NOTE);
+    expect(text).toContain("Top referring domains: none on record.");
   });
 
   it("omits the 'of N' clause when nothing was truncated", () => {
@@ -90,6 +124,54 @@ describe("formatBacklinkProfile", () => {
     expect(text).not.toContain(" of 12,372");
   });
 
+  /**
+   * R-6.2 (finding AB-2). The paid /backlinks/summary/live body carries a per-attribute breakdown
+   * — the vendor's own example counts 88 `sponsored` links — and the report printed none of it:
+   * `nofollow`, `sponsored` and `ugc` are three DIFFERENT declarations to Google, and the reply
+   * did not even carry the raw nofollow COUNT, only a percentage derived from it.
+   */
+  it("prints the vendor's rel-attribute buckets separately, under the vendor's own key names", () => {
+    const text = formatBacklinkProfile(FULL_PROFILE);
+    expect(text).toContain("referring_links_attributes");
+    expect(text).toContain("nofollow 4,120");
+    expect(text).toContain("sponsored 88");
+    // Not summed, not bucketed: three vendor keys, three numbers.
+    expect(text).toContain("noopener 2,210");
+  });
+
+  it("keeps the vendor's own key ORDER instead of sorting the buckets", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      summary: {
+        ...FULL_PROFILE.summary,
+        referring_links_attributes: { ugc: 3, nofollow: 2, sponsored: 1 },
+      },
+    });
+    expect(text).toContain("ugc 3 · nofollow 2 · sponsored 1");
+  });
+
+  /** A silence is said in WORDS. An absent breakdown must never render as "0 sponsored". */
+  it("says the vendor did not report the attributes rather than printing zeroes", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      summary: { ...FULL_PROFILE.summary, referring_links_attributes: null },
+    });
+    expect(text).toContain(
+      "• Link attributes (DataForSEO referring_links_attributes): not reported in this response",
+    );
+    expect(text).not.toContain("sponsored 0");
+  });
+
+  /** An EMPTY map is the vendor answering, not the vendor staying silent — a different sentence. */
+  it("distinguishes an empty vendor breakdown from an absent one", () => {
+    const text = formatBacklinkProfile({
+      ...FULL_PROFILE,
+      summary: { ...FULL_PROFILE.summary, referring_links_attributes: {} },
+    });
+    expect(text).toContain("reported with no attribute counted");
+    expect(text).not.toContain("not reported in this response");
+  });
+
   it("renders n/a for every missing metric rather than inventing a number", () => {
     const text = formatBacklinkProfile({
       target: "quiet.example",
@@ -101,6 +183,7 @@ describe("formatBacklinkProfile", () => {
         referring_domains_nofollow: null,
         referring_main_domains: null,
         broken_backlinks: null,
+        referring_links_attributes: null,
       },
       top_referring_domains: {
         total_count: null,
@@ -152,6 +235,75 @@ describe("formatBacklinkProfile", () => {
     const text = formatBacklinkProfile(FULL_PROFILE);
     expect(text.startsWith('Backlink profile for "example.com":')).toBe(true);
     expect(text).not.toContain("your project");
+  });
+});
+
+/**
+ * THE OUTPUT CEILING (finding AB-1, 2026-09-04).
+ *
+ * `limit` DEFAULTS to its own maximum here, so the commonest 70-credit call is also the widest one
+ * the schema allows: 1,000 referring domains and 1,000 anchors. At the row widths measured on the
+ * live run (a referring-domain row ~65 characters, an anchor row ~44) that computes to ~109,000
+ * characters — 1.7x the 62,729-character reply a client REFUSED from the sibling backlink_details
+ * on 2026-08-25, with the 35 credits and the vendor's dollars taken and nothing delivered.
+ *
+ * These pin the contract that incident bought the sibling: the reply is bounded, and the rows that
+ * did not fit are stated rather than dropped in silence.
+ */
+describe("formatBacklinkProfile output ceiling", () => {
+  /** Rows shaped like the live ones (a real referring-domain row measured ~65 characters). */
+  const domainRows = (count: number) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      domain: `referring-domain-number-${index}.example.com`,
+      backlinks: 9_864,
+      rank: 302,
+      backlinks_spam_score: 6,
+    }));
+
+  const anchorRows = (count: number) =>
+    Array.from({ length: count }, (_unused, index) => ({
+      anchor: `anchor phrase number ${index}`,
+      backlinks: 4_186,
+    }));
+
+  /** The widest call the schema permits: `limit` at its maximum, which is also its DEFAULT. */
+  const widest: BacklinkProfile = {
+    ...FULL_PROFILE,
+    top_referring_domains: { total_count: 12_372, rows: domainRows(1_000) },
+    top_anchors: { total_count: 83_736, rows: anchorRows(1_000) },
+  };
+
+  it("bounds the widest call the schema allows to one reply a client can accept", () => {
+    expect(formatBacklinkProfile(widest).length).toBeLessThanOrEqual(MAX_RENDERED_OUTPUT_CHARS);
+  });
+
+  it("says how many rows were fetched and not printed — in BOTH lists, and that they were paid for", () => {
+    const text = formatBacklinkProfile(widest);
+    expect(text).toMatch(/Output limit reached — \d[\d,]* referring domains printed above/);
+    expect(text).toMatch(/Output limit reached — \d[\d,]* anchors printed above/);
+    expect(text).toContain("they were charged for either way");
+  });
+
+  /** A cut list keeps its rows CONTIGUOUS from the top: the vendor's order is the product claim. */
+  it("keeps the printed rows in the vendor's order, cutting only from the end", () => {
+    const text = formatBacklinkProfile(widest);
+    expect(text).toContain("• referring-domain-number-0.example.com —");
+    expect(text).toContain("• referring-domain-number-1.example.com —");
+    expect(text).not.toContain("• referring-domain-number-999.example.com —");
+  });
+
+  /**
+   * The header still counts what DataForSEO RETURNED; the note explains what was not printed. The
+   * count is matched with a regex rather than a literal because `listHeader` does not group the
+   * FETCHED count's digits (it groups the vendor total's) — a pre-existing spelling this finding
+   * does not change, and pinning either spelling as a literal would pin the wrong thing.
+   */
+  it("does not restate the truncation in the list header", () => {
+    expect(formatBacklinkProfile(widest)).toMatch(/Top referring domains \(1,?000 of 12,372\):/);
+  });
+
+  it("says nothing about an output limit on a profile that fits", () => {
+    expect(formatBacklinkProfile(FULL_PROFILE)).not.toContain("Output limit reached");
   });
 });
 

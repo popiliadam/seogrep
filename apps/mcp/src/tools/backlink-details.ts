@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { renderOutputLimitNote, renderWithinBudget } from "../format/output-budget.ts";
+import { REL_ATTRIBUTES_NOTE, relAttributesClause } from "../format/rel-attributes.ts";
 import {
   BACKLINK_DETAILS_RANK_MAX,
   DEFAULT_BACKLINK_DETAIL_ROWS,
@@ -193,6 +195,20 @@ function followClause(dofollow: boolean | null): string {
 }
 
 /**
+ * The follow status AND the vendor's `rel` list, when it sent one (R-6.2, finding BD-3).
+ *
+ * The boolean alone cannot separate a paid link declared `sponsored` from a forum signature
+ * declared `ugc` from a plain `nofollow` — three different statements that Google's spam policies
+ * treat differently, all rendered here as the single word "nofollow" until 2026-09-04. The vendor's
+ * own list is appended verbatim; when the vendor sent none, the row reads exactly as it always did.
+ */
+function followAndAttributesClause(row: BacklinkDetailRow): string {
+  const rel = relAttributesClause(row.attributes);
+  const follow = followClause(row.dofollow);
+  return rel === null ? follow : `${follow} · ${rel}`;
+}
+
+/**
  * The anchor, or WHY there is none. The port renders a missing anchor as "" (the vendor sends
  * null on image links), and `item_type` is the vendor's own explanation — printing it beside the
  * blank keeps "no anchor text" from reading as a defect in the lookup.
@@ -207,7 +223,8 @@ export function renderBacklinkRow(row: BacklinkDetailRow): string {
   const broken = row.is_broken === true ? " · DataForSEO flags this link as broken" : "";
   return (
     `• ${row.domain_from} → ${urlOrUnnamed(row.url_to)}\n` +
-    `  from ${urlOrUnnamed(row.url_from)} · ${anchorClause(row)} · ${followClause(row.dofollow)} · ` +
+    `  from ${urlOrUnnamed(row.url_from)} · ${anchorClause(row)} · ` +
+    `${followAndAttributesClause(row)} · ` +
     `rank ${metric(row.rank)} of ${thousands(BACKLINK_DETAILS_RANK_MAX)} · ` +
     `vendor spam score ${metric(row.backlink_spam_score)} · ` +
     `linked page status ${metric(row.url_to_status_code)} · ` +
@@ -283,45 +300,14 @@ export const MAX_RENDERED_OUTPUT_CHARS = 28_000;
 const LINK_LIST_CHAR_BUDGET = 20_000;
 const TARGET_PAGE_LIST_CHAR_BUDGET = 5_000;
 
-/**
- * Render rows until the budget is spent. A row is taken ONLY if it fits whole — a half-printed
- * backlink row is a URL cut in the middle, which reads as a different URL.
- */
-function renderWithinBudget<Row>(
-  rows: readonly Row[],
-  render: (row: Row) => string,
-  budget: number,
-): { readonly block: string; readonly printed: number; readonly omitted: number } {
-  const taken: string[] = [];
-  let used = 0;
-  for (const row of rows) {
-    const line = render(row);
-    const cost = line.length + 1; // + the newline that joins it to the block
-    if (used + cost > budget) break;
-    taken.push(line);
-    used += cost;
-  }
-  return { block: taken.join("\n"), printed: taken.length, omitted: rows.length - taken.length };
-}
-
-/**
- * What the reader is told when rows were fetched and not printed. It never says "of": both counts
- * describe the SAME window, and the module header's rule is that two DIFFERENT sets are never
- * joined — keeping the phrasing free of "N of M" also keeps it from being read as the vendor's
- * whole-set total. It states plainly that the missing rows were paid for, because they were.
- */
-export function renderOutputLimitNote(
-  noun: string,
-  printed: number,
-  omitted: number,
-  advice: string,
-): string {
-  return (
-    `Output limit reached — ${thousands(printed)} ${printed === 1 ? noun : `${noun}s`} printed ` +
-    `above, ${thousands(omitted)} more fetched in this same window but not printed: one reply ` +
-    `cannot hold them, and they were charged for either way. ${advice}`
-  );
-}
+// THE MECHANISM ITSELF now lives in format/output-budget.ts (2026-09-04). It moved because the
+// SIBLING at twice the price had no ceiling at all: `analyze_backlinks` renders the same family of
+// lists with a `limit` that defaults to its own maximum of 1,000 (finding AB-1). Writing "your
+// reply was cut" a second time is how one of the two copies stops saying that the unprinted rows
+// were paid for. The NUMBERS above stay here — how a tool splits its ceiling across its own lists
+// is not shareable — and the note is re-exported so the pins that import it from this module and
+// the sibling that imports it from format/ are provably reading ONE sentence.
+export { renderOutputLimitNote };
 
 const LINK_TRUNCATION_ADVICE =
   "Move the window with offset to read the rest — each call is a separate " +
@@ -352,6 +338,27 @@ function renderList<Row>(list: {
   ];
 }
 
+/**
+ * THE EMPTY LINK WINDOW, SAID OUT LOUD — finding BD-1 (2026-09-04).
+ *
+ * MEASURED: a paid 35-credit call (`limit 5, offset 19000, page_limit 3`) returned 1,164
+ * characters in which the string "Individual backlinks" never appeared and neither did the offset
+ * it was empty for. The reader could not tell "this site has no links" from "the window ran past
+ * the end of the list" from "something went wrong" — three answers separated, in that lookup, by
+ * 42 million rows.
+ *
+ * The honest sentence DID exist (renderNothingFound), but only for the case where BOTH windows
+ * are empty — and the PAGE window is always fetched from offset 0 (dfs/backlink-details.ts never
+ * sends one), so on a domain that has any backlinks at all it never is. The honest answer was
+ * unreachable in production while its test stayed green on a hand-built double: signed lesson 12,
+ * exactly. This note closes the half that could actually happen.
+ */
+export const EMPTY_LINK_WINDOW_NOTE =
+  "No individual backlinks came back in this window, and the pages below are unaffected: the page " +
+  "list is always fetched from the start of its own list, whatever offset the links were asked " +
+  "for. An empty link window usually means the window sits past the end of the list — lower " +
+  "`offset` to move back into it — and the lookup was charged either way.";
+
 /** The "nothing at all" answer — a real, delivered result rather than an error. */
 function renderNothingFound(details: BacklinkDetails, project?: ProjectRef | null): string {
   const subject = subjectLabel(details.target, project);
@@ -375,8 +382,14 @@ export function formatBacklinkDetails(
   const subject = subjectLabel(details.target, project);
   return [
     `Backlinks for ${subject} — the individual links, and the pages of this site they point at:`,
+    // An EMPTY link window states its own bounds through the SAME caption formatter rather than
+    // disappearing (finding BD-1): the caption prints "0 backlinks in this window (offset N,
+    // limit M)" on its own, and the note below says what that means for the half that follows.
     ...(links.length === 0
-      ? []
+      ? [
+          renderWindowCaption("Individual backlinks", "backlink", details.links),
+          EMPTY_LINK_WINDOW_NOTE,
+        ]
       : renderList({
           caption: renderWindowCaption("Individual backlinks", "backlink", details.links),
           rows: links,
@@ -399,6 +412,13 @@ export function formatBacklinkDetails(
           noun: "page",
           advice: PAGE_TRUNCATION_ADVICE,
         })),
+    // WHAT `sponsored` / `ugc` MEAN — printed only when this window actually carries rel values,
+    // so an answer that shows none does not carry an explanation of words nobody saw. It is keyed
+    // off the FETCHED rows: they are the window the caller paid for, and the output ceiling can
+    // cut a row without making the vendor's declaration on it untrue.
+    ...(links.some((row) => relAttributesClause(row.attributes) !== null)
+      ? [REL_ATTRIBUTES_NOTE]
+      : []),
     VENDOR_SPAM_SCORE_NOTE,
   ].join("\n\n");
 }

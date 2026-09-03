@@ -98,6 +98,7 @@ function profile(over: Partial<BacklinkProfile> = {}): BacklinkProfile {
       referring_domains: 12372,
       referring_domains_nofollow: 1458,
       referring_main_domains: 11004,
+      referring_links_attributes: { nofollow: 1458, sponsored: 12 },
       broken_backlinks: 63,
     },
     top_referring_domains: { total_count: 12372, rows: [referringDomain()] },

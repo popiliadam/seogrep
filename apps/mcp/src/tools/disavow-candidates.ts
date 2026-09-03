@@ -2,12 +2,14 @@ import { z } from "zod";
 import type { AuthContext } from "../auth.ts";
 import { withCredits } from "../credits/guard.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
+import { relAttributesClause } from "../format/rel-attributes.ts";
 import {
   CANDIDATE_ORDER_VENDOR_FIELD,
   DEFAULT_LINK_ROWS,
   DEFAULT_NETWORK_ROWS,
   DISAVOW_TXT_PROPOSAL_NOTICE,
   isNofollowOnlyInWindow,
+  isQualifiedOnlyInWindow,
   LINK_WINDOW_ORDER_VENDOR_FIELD,
   MAX_LINK_ROWS,
   MAX_NETWORK_ROWS,
@@ -207,6 +209,20 @@ function followClause(dofollow: boolean | null): string {
   return dofollow ? "dofollow" : "nofollow";
 }
 
+/**
+ * The follow status AND the vendor's `rel` list, when it sent one (R-6.2, finding DC B-6).
+ *
+ * The boolean flattens three different declarations into one word: a PAID link declared
+ * `sponsored`, a forum signature declared `ugc` and a plain `nofollow` all read as "nofollow" —
+ * on the screen where a reader decides which domains to name in a disavow file. The vendor's own
+ * list is appended verbatim; a link the vendor said nothing about renders as it always did.
+ */
+function followAndAttributesClause(row: BacklinkDetailRow): string {
+  const rel = relAttributesClause(row.attributes);
+  const follow = followClause(row.dofollow);
+  return rel === null ? follow : `${follow} · ${rel}`;
+}
+
 /** A URL the vendor may not have named. Absent is said out loud, never left as a gap. */
 function urlOrUnnamed(url: string | null): string {
   return url ?? "(DataForSEO did not name it)";
@@ -227,7 +243,8 @@ export function renderFilteredLinkRow(row: BacklinkDetailRow): string {
   const broken = row.is_broken === true ? " · DataForSEO flags this link as broken" : "";
   return (
     `• ${row.domain_from} → ${urlOrUnnamed(row.url_to)}\n` +
-    `  from ${urlOrUnnamed(row.url_from)} · ${anchorClause(row)} · ${followClause(row.dofollow)} · ` +
+    `  from ${urlOrUnnamed(row.url_from)} · ${anchorClause(row)} · ` +
+    `${followAndAttributesClause(row)} · ` +
     `${vendorScore(LINK_WINDOW_ORDER_VENDOR_FIELD, row.backlink_spam_score)} · ` +
     `first seen ${row.first_seen ?? "n/a"} · last seen ${row.last_seen ?? "n/a"}${broken}`
   );
@@ -251,6 +268,40 @@ export const NOFOLLOW_ONLY_MARKER =
  * describes is the difference between reading a 0 as reassurance and reading it as one endpoint's
  * answer to one question.
  */
+/**
+ * THE R-6.2 MARKING, in the ANSWER — finding DC B-6.
+ *
+ * A sibling of {@link NOFOLLOW_ONLY_MARKER} on a DIFFERENT vendor field. That one reads the
+ * `dofollow` boolean and says "none of these links is MARKED dofollow", which includes links the
+ * vendor said nothing about. This one reads the `attributes` list the vendor actually sent: every
+ * link in the window carries a rel value Google's spam policies name — `nofollow`, `sponsored`
+ * (paid) or `ugc` — so Google is already told not to count them, and a `domain:` entry naming this
+ * domain may accomplish nothing. It says what was MEASURED, and it removes no row.
+ */
+export const QUALIFIED_ONLY_MARKER =
+  "EVERY link from this domain in this window carries a rel attribute Google reads as a request " +
+  "not to count it (nofollow, sponsored or ugc, above) — so disavowing this domain may change " +
+  "nothing.";
+
+/**
+ * The two markings a candidate can carry, at most one of them printed.
+ *
+ * They overlap by construction — a window whose links are all `nofollow` triggers both — and two
+ * sentences that say "may change nothing" back to back read as two findings rather than one fact
+ * seen through two vendor fields. The ATTRIBUTES marking wins where both apply: it names WHICH
+ * declaration the vendor reported, which is strictly more than "not marked dofollow".
+ */
+function candidateMarking(candidate: DisavowCandidate): string {
+  if (isQualifiedOnlyInWindow(candidate)) return `\n  ${QUALIFIED_ONLY_MARKER}`;
+  return isNofollowOnlyInWindow(candidate) ? `\n  ${NOFOLLOW_ONLY_MARKER}` : "";
+}
+
+/** The vendor's rel values seen across this domain's window, or nothing when it sent none. */
+function candidateAttributesClause(candidate: DisavowCandidate): string {
+  const rel = relAttributesClause(candidate.window_link_attributes);
+  return rel === null ? "" : ` · ${rel}`;
+}
+
 export function renderCandidateRow(candidate: DisavowCandidate): string {
   const links = candidate.window_link_count;
   const counts =
@@ -260,10 +311,10 @@ export function renderCandidateRow(candidate: DisavowCandidate): string {
     LINK_WINDOW_ORDER_VENDOR_FIELD,
     candidate.window_max_backlink_spam_score,
   )} in this window`;
-  const marking = isNofollowOnlyInWindow(candidate) ? `\n  ${NOFOLLOW_ONLY_MARKER}` : "";
+  const marking = candidateMarking(candidate);
   return (
     `• ${candidate.domain} — ${vendorScore(CANDIDATE_ORDER_VENDOR_FIELD, candidate.spam_score)}\n` +
-    `  ${counts} · ${worst}\n` +
+    `  ${counts} · ${worst}${candidateAttributesClause(candidate)}\n` +
     `  example: ${urlOrUnnamed(candidate.window_example_url_from)} → ` +
     `${urlOrUnnamed(candidate.window_example_url_to)}${marking}`
   );

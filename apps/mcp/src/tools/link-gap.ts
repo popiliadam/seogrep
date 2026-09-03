@@ -150,6 +150,36 @@ export function renderLinkGapTotalNote(total: number | null, shown: number): str
 }
 
 /**
+ * THE R-6.2 MARKING ON A PROSPECT — finding LG B-1.
+ *
+ * This list is sold as an outreach shortlist, which is a RECOMMENDATION built on the vendor's
+ * numbers; a domain whose every counted referring page carries a nofollow link is a materially
+ * different prospect from one that links with followed links, and Google's spam policies are
+ * explicit that a nofollowed link is one it is asked not to count.
+ *
+ * WHAT THE MARKING DOES NOT DO: it does not reorder, filter or downgrade anything. The order is
+ * DataForSEO's, the tool promises the vendor's order, and R-6.2 is a DISCLOSURE rule rather than
+ * an exclusion rule. The sentence also stops where the vendor's own definition stops — the two
+ * counters are equal, so no counted page is free of a nofollow link — and claims nothing about
+ * whether the domain would link to the caller at all.
+ */
+export const LINK_GAP_NOFOLLOW_MARKER =
+  "DataForSEO counts as many nofollow referring pages here as referring pages, so none of the " +
+  "pages it counted from this domain is free of a nofollow link — Google does not count " +
+  "nofollowed links. The row keeps its place: this list is in DataForSEO's order, and this is a " +
+  "note about the domain, not a ranking of it.";
+
+/** Both counters present, something actually counted, and the two equal. Nothing is derived. */
+function isNofollowOnPageCount(row: LinkGapRow): boolean {
+  return (
+    row.referring_pages !== null &&
+    row.referring_pages > 0 &&
+    row.referring_pages_nofollow !== null &&
+    row.referring_pages_nofollow >= row.referring_pages
+  );
+}
+
+/**
  * One prospect row. Every clause is printed only when DataForSEO returned the value behind it, so
  * an absent metric is left OUT rather than rendered as a zero. `rank` is always stated (as "n/a"
  * when absent) because it is the axis the list is ordered by, and the "of 1,000" suffix names the
@@ -163,10 +193,23 @@ export function renderLinkGapRow(row: LinkGapRow, competitor: string): string {
   if (row.referring_pages !== null) {
     parts.push(`from ${metric(row.referring_pages)} of its pages`);
   }
+  // The vendor's two nofollow counters, each under its own name and each printed ONLY when the
+  // vendor sent it (R-6.2, finding LG B-1). Nothing is subtracted from the counts above: the
+  // vendor documents these as "carries AT LEAST ONE nofollow link", so the difference is not a
+  // count of followed pages and printing one would invent a measurement.
+  if (row.referring_pages_nofollow !== null) {
+    parts.push(`referring_pages_nofollow ${metric(row.referring_pages_nofollow)}`);
+  }
+  if (row.referring_domains_nofollow !== null) {
+    parts.push(`referring_domains_nofollow ${metric(row.referring_domains_nofollow)}`);
+  }
   if (row.backlinks_spam_score !== null) {
     parts.push(`spam score ${row.backlinks_spam_score}`);
   }
   const lines = [`• ${row.domain} — ${parts.join(" · ")}`];
+  if (isNofollowOnPageCount(row)) {
+    lines.push(`  ${LINK_GAP_NOFOLLOW_MARKER}`);
+  }
   if (row.first_seen !== null) {
     // DataForSEO's own definition, carried verbatim: "when our crawler found the backlink from
     // this target for the first time" — the date the LINK was first seen, not the date the domain
