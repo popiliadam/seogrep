@@ -61,6 +61,8 @@ import {
 } from "./tracked-keywords-store.ts";
 import { findPriorAuditRun } from "../audit/runs.ts";
 import { archiveOwnProject } from "./untrack-project.ts";
+import { defaultLoadAccountToken, defaultLoadConnection } from "./pull-gsc-data.ts";
+import { loadGscTokenStatus } from "../gsc-data/load.ts";
 
 /** The one shape every spec below asserts: this call, with these arguments, in this chain. */
 const tenantFilter = { method: "eq", args: ["user_id", USER] };
@@ -657,6 +659,71 @@ describe("the audit crawl reads carry their whole key (2026-09 audit slice)", ()
     expect(runs.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
     expect(runs.calls).toContainEqual({ method: "eq", args: ["crawl_job_id", CRAWL_JOB] });
     expect(runs.calls).toContainEqual({ method: "eq", args: ["tool", "audit_onpage"] });
+  });
+});
+
+/**
+ * PULL_GSC_DATA B-5 — THE TABLE THAT HOLDS EVERY GOOGLE CREDENTIAL IN THE PRODUCT.
+ *
+ * Measured 2026-09-03: deleting `.eq("user_id", userId)` from `defaultLoadAccountToken` left the
+ * whole fast lane at 3914/3914 and `tsc --noEmit` clean. `gsc_accounts` stores every tenant's
+ * sealed Google refresh token, and on an RLS-bypassing service client that one call is the whole
+ * of NEVER #4 for the read. (Decryption is bound to `{userId, accountId}`, which is a SECOND
+ * defence and was never written to stand in for this one.) The same hole sat on
+ * `defaultLoadConnection` and on `loadGscTokenStatus`, for the reason this file opens with: all
+ * three are default ports, and every fast-lane spec injects around them.
+ *
+ * THREE READS, THREE BLOCKS — the axis this file's own history says gets missed (signed lesson
+ * 14): a fix that restored one filter and not the others would pass a single shared spec.
+ * Each asserts the WHOLE key, not the tenant column alone: a read that kept `user_id` and lost
+ * `id` would hand back some other row of the same tenant, which is a different bug and equally
+ * unpinned.
+ */
+describe("the GSC credential reads carry their whole key (PGD B-5)", () => {
+  const PROJECT = "b7c8d9e0-1f2a-4b3c-8d4e-5f6071829304";
+  const ACCOUNT = "c1d2e3f4-5061-4728-9a3b-4c5d6e7f8091";
+
+  it("defaultLoadConnection scopes gsc_connections to this tenant's own project", async () => {
+    db = createFakeQueryDb(() => ({ data: null }));
+    await defaultLoadConnection(USER, PROJECT);
+
+    const statement = db.onlyStatementFor("gsc_connections");
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+    expect(callsTo(statement, "maybeSingle")).toHaveLength(1);
+  });
+
+  it("defaultLoadAccountToken scopes gsc_accounts by user_id as well as by account id", async () => {
+    db = createFakeQueryDb(() => ({ data: null }));
+    await defaultLoadAccountToken(ACCOUNT, USER);
+
+    const statement = db.onlyStatementFor("gsc_accounts");
+    expect(statement.calls).toContainEqual(tenantFilter);
+    expect(statement.calls).toContainEqual({ method: "eq", args: ["id", ACCOUNT] });
+    expect(callsTo(statement, "maybeSingle")).toHaveLength(1);
+  });
+
+  /**
+   * The health read is TWO statements and both are open. The second one is the same table the
+   * credential lives on, reached through an `account_id` the first statement handed over — so an
+   * unfiltered second read answers with another tenant's token status for an account id that is
+   * not theirs.
+   */
+  it("loadGscTokenStatus scopes BOTH of its reads, connection and account", async () => {
+    db = createFakeQueryDb((statement) =>
+      statement.table === "gsc_connections"
+        ? { data: { account_id: ACCOUNT } }
+        : { data: { token_status: "active" } },
+    );
+    await expect(loadGscTokenStatus(USER, PROJECT)).resolves.toBe("active");
+
+    const connection = db.onlyStatementFor("gsc_connections");
+    expect(connection.calls).toContainEqual(tenantFilter);
+    expect(connection.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+
+    const account = db.onlyStatementFor("gsc_accounts");
+    expect(account.calls).toContainEqual(tenantFilter);
+    expect(account.calls).toContainEqual({ method: "eq", args: ["id", ACCOUNT] });
   });
 });
 

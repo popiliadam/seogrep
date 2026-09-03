@@ -142,8 +142,13 @@ export interface PullGscDataDeps {
  * (constitution NEVER #4) AND project_id. The literal table gives the specific row type, so
  * the project_id filter type-checks (forUser's selectOwn narrows filters to the columns
  * common to ALL tenant tables, which excludes project_id).
+ *
+ * EXPORTED for `service-client-pins.test.ts` only. Every other port of this tool is injected in
+ * the fast lane, so the production query never ran there and the tenant filter below was pinned
+ * by the db lane alone — which `make verify` does not run (B-5, measured 2026-09-03: deleting the
+ * filter left 3914/3914 green).
  */
-const defaultLoadConnection: LoadConnectionFn = async (userId, projectId) => {
+export const defaultLoadConnection: LoadConnectionFn = async (userId, projectId) => {
   const { data, error } = await getServiceClient()
     .from("gsc_connections")
     .select("account_id, gsc_property")
@@ -160,10 +165,14 @@ const defaultLoadConnection: LoadConnectionFn = async (userId, projectId) => {
  * The default gsc_accounts reader, scoped to the tenant by an explicit user_id filter AND the
  * account id (constitution NEVER #4 — service_role bypasses RLS, so this filter is the ONLY
  * tenant guard on the table holding every Google credential in the product). A row that is
- * missing or belongs to another tenant both read as null — mutation-tested: dropping the
- * user_id filter here is what pull-gsc-data.db.test.ts's SECURITY spec catches.
+ * missing or belongs to another tenant both read as null.
+ *
+ * WHICH LANE CATCHES IT, correctly named since 2026-09-03: `pull-gsc-data.db.test.ts`'s SECURITY
+ * spec does — and `make verify` does NOT run that lane, so until B-5 the comment pointed the
+ * reader at a gate their daily run never executes. `service-client-pins.test.ts` now pins the
+ * chain in the fast lane, which is why this const is exported.
  */
-const defaultLoadAccountToken: LoadAccountTokenFn = async (accountId, userId) => {
+export const defaultLoadAccountToken: LoadAccountTokenFn = async (accountId, userId) => {
   const { data, error } = await getServiceClient()
     .from("gsc_accounts")
     .select("encrypted_refresh_token, google_account_email")
