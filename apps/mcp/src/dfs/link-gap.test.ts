@@ -84,9 +84,23 @@ describe("parseLinkGapResponse", () => {
       rank: 612,
       backlinks: 41,
       referring_pages: 27,
+      // R-6.2 (finding LG B-1): the two nofollow counters ride in the SAME paid response and were
+      // being dropped, so an "outreach shortlist" could not tell a domain that links with followed
+      // links from one whose every counted page carries a nofollow.
+      referring_pages_nofollow: 2,
+      referring_domains_nofollow: 0,
       backlinks_spam_score: 4,
       first_seen: "2023-04-11 08:22:17 +00:00",
     });
+  });
+
+  /** The vendor sends these counters on some rows and not others; absent stays null, never 0. */
+  it("keeps a missing nofollow counter as null rather than reading it as zero", () => {
+    const parsed = parseLinkGapResponse(linkGapFixture);
+    const partial = parsed.rows.find((row) => row.domain === "devtoolsdigest.test");
+    expect(partial?.referring_pages).toBe(6);
+    expect(partial?.referring_pages_nofollow).toBeNull();
+    expect(partial?.referring_domains_nofollow).toBeNull();
   });
 
   /**
