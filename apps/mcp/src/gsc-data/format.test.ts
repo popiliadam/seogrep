@@ -557,7 +557,12 @@ describe("cannibalizationAdvice names a keeper only when the data supports one",
  * nothing the row above it did not already say.
  */
 describe("contentDecayAdvice differentiates by HOW the page fell", () => {
-  function decayed(previous: number, current: number, page = "https://x.test/p"): PageDecay {
+  function decayed(
+    previous: number,
+    current: number,
+    page = "https://x.test/p",
+    over: Partial<PageDecay> = {},
+  ): PageDecay {
     const lost = previous - current;
     return {
       page,
@@ -565,6 +570,11 @@ describe("contentDecayAdvice differentiates by HOW the page fell", () => {
       current_clicks: current,
       clicks_lost: lost,
       drop_ratio: lost / previous,
+      previous_impressions: 0,
+      current_impressions: 0,
+      previous_position: null,
+      current_position: null,
+      ...over,
     };
   }
 
@@ -670,4 +680,5 @@ describe("contentDecayAdvice differentiates by HOW the page fell", () => {
   it("adds no recommendation when nothing decayed", () => {
     expect(formatContentDecay([])).not.toContain("→");
   });
+
 });
