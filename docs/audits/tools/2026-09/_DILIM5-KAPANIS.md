@@ -10,7 +10,8 @@
 > **#229** paket F (`ee31cfd`) · **#228** paket G (`ff71037`). Dördünün de CI'ı **`verify-db` DAHİL
 > yeşil geçti** (E'de bir PostgREST 502 flake rerun'la geçti — kalıcı tuzak `verify-db-ci-flake`).
 > Taban: `main` **`ff71037`**, canlıda.
-> **Açık:** **#230** paket H (BD-8) — hakem + CI sürüyor, `main`'de YOK.
+> **#230** paket H (BD-8) da `main`'de: **`800d5ee`** (merge 2026-09-04 01:00 UTC). Hakem H dar FAIL →
+> follow-up `caddd14` ile PASS; CI **üç rerun** sonra yeşil (hepsi flake — aşağıda adıyla).
 
 ## Sayılar
 
@@ -18,9 +19,9 @@
 |---|---|
 | Bulgu (6 kayıt toplamı) | **38** (6 + 8 + 6 + 6 + 5 + 7) — ölçüm turu 36 yazmıştı; şefin canlı sondası **ikisini ekledi**: BD-8 (P1) ve C-6 (P2) |
 | P0 | 0 |
-| P1 | **13** — hakem bandı H-1 sonrası. **10'u KAPANDI** (AB-5, BD-1, BD-6, BC B-2/B-3/B-6, C-1, C-3, LG B-3, DC B-3), 1'i KISMEN (AB-1), 1'i merge bekliyor (BD-8), 1'i İMZA (DC B-1) |
-| KAPANDI | **23** — 22'si PR'lı, 1'i (C-5) şefin 90 kredilik canlı ölçümüyle |
-| KAPANDI, merge bekliyor | **1** (BD-8 → #230) |
+| P1 | **13** — hakem bandı H-1 sonrası. **10'u KAPANDI** (AB-5, BD-1, BD-6, BC B-2/B-3/B-6, C-1, C-3, LG B-3, DC B-3), 1'i KISMEN (AB-1), 1'i canlıda ölçülmedi (BD-8), 1'i İMZA (DC B-1) |
+| KAPANDI | **24** — 23'ü PR'lı, 1'i (C-5) şefin 90 kredilik canlı ölçümüyle |
+| KAPANDI, merge bekliyor | **0** — BD-8 #230 ile `main`'e girdi (`800d5ee`); **canlı doğrulaması YOK** |
 | KISMEN | **1** (AB-1: tavan yarısı #229, varsayılan `limit` yarısı İMZA) |
 | AÇIK | **8** — hepsi `PR'da karşılığı bulunamadı`: AB-4 · AB-6 · BD-4 · BD-5 · C-4 · LG B-5 · DC B-2 · DC B-7 |
 | İMZA KALEMİ | **5** (BC B-1 · C-2 · **C-6 yeni** · DC B-1 · DC B-4) |
@@ -35,7 +36,7 @@
 | tool | karar (kapanış) | kapatan PR'lar | canlı doğrulama | açık kalemler |
 |---|---|---|---|---|
 | `analyze_backlinks` | **KISMEN DÜZELTİLDİ** — 3 bulgu + 1 yarı kapandı | #229 (AB-2, AB-3, AB-1 tavan yarısı) · #227 (AB-5) | **✔ AB-2** (70 kr): `• Link attributes (DataForSEO referring_links_attributes): noopener 66 · nofollow 53 · noreferrer 21 · ugc 6` | AB-1 varsayılan `limit` **İMZA** · **AB-4 AÇIK** · **AB-6 AÇIK** · AB-3 canlıda ölçülmedi (`limit 50`) |
-| `backlink_details` | **KISMEN DÜZELTİLDİ** — 5 bulgu kapandı, 1 yeni doğdu | #229 (BD-1, BD-3) · #228 (BD-2, BD-7) · #227 (BD-6) | **✔ BD-1** (35 kr): `Individual backlinks — 0 backlinks in this window (offset 19,000, limit 5).` — **ve aynı satır BD-8'i açtı** | **BD-8 → #230, merge bekliyor** · **BD-4 AÇIK** · **BD-5 AÇIK** · BD-3 canlıda ölçülemedi (pencere boştu) |
+| `backlink_details` | **KISMEN DÜZELTİLDİ** — 6 bulgu kapandı (BD-8 dahil), biri canlıda ölçülmedi | #229 (BD-1, BD-3) · #228 (BD-2, BD-7) · #227 (BD-6) · **#230 (BD-8, `800d5ee`)** | **✔ BD-1** (35 kr): `Individual backlinks — 0 backlinks in this window (offset 19,000, limit 5).` — **ve aynı satır BD-8'i açtı** | **BD-8 canlıda ölçülmedi** (#230 `main`'de) · **BD-4 AÇIK** · **BD-5 AÇIK** · BD-3 canlıda ölçülemedi (pencere boştu) |
 | `backlink_changes` | **KAPANDI** — 5 bulgunun 5'i kapandı (üç P1 dahil) | #228 (B-2, B-4, B-5, B-6) · #227 (B-3) | **✔ B-4** (35 kr): `• 2026-09-06 — 2 new / 2 lost backlinks … — PARTIAL: this period has not ended yet` | **B-1 İMZA** (core-update takvimi) · B-2'nin canlı ay-sonu hâli ölçülemedi (bir takvim günü ister) |
 | `compare_competitors` | **KISMEN DÜZELTİLDİ** — 3 kalem kapandı (biri ölçümle), 1 yeni doğdu | #228 (C-1) · #227 (C-3) | **✔ C-1** (90 kr): `This lookup used the DEFAULT locale — the United States, in English — but adstark.com.tr is a .tr domain…`; **C-5 aynı çağrıyla kapandı** — `the target against the top 3 of 119 competitors DataForSEO found` | **C-6 YENİ + İMZA** (keşif modu hiç karşılaştırma basmıyor) · **C-2 İMZA** · **C-4 AÇIK** |
 | `link_gap` | **KAPANDI** — 4 bulgunun 4'ü kapandı (tek P1 dahil) | #229 (B-1) · #228 (B-2, B-4) · #227 (B-3) | **✔ B-1** (45 kr): `… · referring_pages_nofollow 0 · referring_domains_nofollow 0 · spam score …` satıcı adıyla; vendor SIRASI korunmuş | **B-5 AÇIK** (kesilme cümlesi `limit`'i adlandırmıyor — `keyword_gap` G-2'nin kardeşi, o da açık) |
@@ -86,7 +87,7 @@ bir test değil, **deploy sonrası canlı sonda** oldu. Bir düzeltmenin kendi �
 Ölçüm turu: taze **sert Fable** hakem — 4/6 PASS, **2/6 dar FAIL** (AB-5, BD-6); ikisi de düzeltme
 sütunundaki ÖLÇÜLMEMİŞ bir iddia yüzünden, ikisi de kayıt düzeltilerek kapandı, ikisi de geri
 çekilmedi. Üç düzeltme paketinin üçü de taze Fable hakemden **PASS** aldı (G ilk turda FAIL →
-follow-up ile PASS). #230'un hakemi **koşuyor**.
+follow-up ile PASS). **#230 (H) de dar FAIL → follow-up `caddd14` → PASS.**
 
 | paket | hakem hükmü / sapma |
 |---|---|
@@ -94,7 +95,7 @@ follow-up ile PASS). #230'un hakemi **koşuyor**.
 | **E (#227)** | **PASS.** Çok istekli portta **TÜM-ÇAĞRI tahminiyle** kapanış — kısmi gerçekle kapatmak bütçeyi başarısız yolda DÜŞÜRÜRDÜ, `settleFailedSpend` sözleşmesi yasaklıyor (kabul). Backlog: **`dfs_spend.status='failed'` migration**. `link_gap` üç-şekil testleri **çıplak `toThrow()`** (P3). Dilim 6 DK-3 kalanları adıyla: `lighthouse.ts:554` · `llm-mentions.ts:1157/1177`. 0014 sayacı `Σ coalesce(actual, estimated)` → **$3 tavanı sente kadar aynı** |
 | **F (#229)** | **PASS.** **İki commit 244/215 satır → NEVER#10 sapması** (bölünebilirdi; toplam 1153 satır olduğu için hakem zaten Fable). Link başına `null` ve `[]` render'da aynı (sessiz) — satıcı `null`'ı "rel yok" için kullanıyor (kabul, kayda). **NOFOLLOW markerlarının "does not count" düz iddiası** main'de de vardı ve kopyalandı → **İMZA**. `disavow_candidates` `REL_ATTRIBUTES_NOTE` basmıyor. `backlink-details.mdx:16` hâlâ "whether it is followed" (P2). **Yeni jsonb alanları db şeridinde pinsiz** |
 | **G (#228)** | **İlk turda FAIL** — H-5'in `audit_speed` gerekçesi "2026-09 turunda ücretli koşulmadı" diyordu; **ölçülmemiş bir NEGATİF ve yanlıştı** (Dilim 2'de iki, kapanışta bir ücretli koşu). Follow-up (`6ea8387`, `cd07e77`, `809231a`) ile **PASS**. PARTIAL sınırı `>=` (bilinçli); mdx'te sıfırın üçüncü anlamı; **`plan.mjs` gerekçe metnini hiçbir kapı ölçmüyor** |
-| **H (#230)** | **Hakemde** — hüküm henüz yok. İşçi kendi mutasyonunda bir delik buldu ve kapattı (`rows === 0` ekseni ilk turda YEŞİL kaldı). Satıcının pencere-dışı `total_count 0` davranışı **canlı gözlemden çıkarıldı**, DataForSEO dokümanından değil |
+| **H (#230)** | **Dar FAIL → follow-up `caddd14` → PASS.** İki sapma: kayıt cümlesi bir **negatif iddia** kuruyordu ve bulgu **BD-4 numarasıyla** anılmıştı (BD-8 olmalıydı) — ikisi de düzeltildi. İşçi kendi mutasyonunda bir delik buldu ve kapattı (`rows === 0` ekseni ilk turda YEŞİL kaldı). Satıcının pencere-dışı `total_count 0` davranışı **canlı gözlemden çıkarıldı**, DataForSEO dokümanından değil |
 
 ## İmza kalemleri (operatörde — kod yazılmaz)
 
@@ -119,7 +120,7 @@ Hakemin 8 kaleminin **2'si kapandı** (7: keşif ölçümü koştu · 8: DK-3 id
 
 | kalem | kaynak | not |
 |---|---|---|
-| **#230 (paket H) merge + deploy** | bu dosya | Hakem + CI sürüyor. Merge sonrası: `backlink_details` kaydının BD-8 hücresi `KAPANDI #230` olur ve canlı sonda (35 kr) bu tabloya eklenir — **tek hücre, şef günceller** |
+| **#230 (paket H) deploy + canlı sonda** | bu dosya | **Merge oldu** (`800d5ee`, 01:00 UTC). Kalan tek iş: deploy sonrası BD-8'i canlıda ölç (35 kr) → `backlink_details` BD-8 hücresi `KAPANDI #230 + canlı ✔` olur — **tek hücre, şef günceller** |
 | `dfs_spend.status='failed'` migration | #227 · sınıf D4-9 | Başarısız çok istekli satır tek istekliden ayırt edilemiyor |
 | M-08 prod migration journal (0022–0033) | Dilim 3'ten devir | Sınıf D4-9 bunun arkasında — DÖRDÜNCÜ dilimde de açık |
 | Yukarıdaki 9 imza kalemi | imza tablosu | Üçü metin/ürün, biri para okunuşu |
@@ -145,8 +146,14 @@ diye sayılmamıştır.
 1. **`disavow_candidates` canlıda hiç koşulmadı** (40 kredi) — ve bu **kasten**: politika metni imza
    kaleminde olduğu için sonda atlandı. Kaydın üç `KAPANDI` satırı (B-3, B-5, B-6) birim testine ve
    paylaşılan sabitin BAŞKA tool yüzeylerindeki canlı kanıtına dayanıyor.
-2. **BD-8'in kendisi `main`'de YOK.** `KAPANDI (#230, merge bekliyor)` bir iddiadır. Üstelik #230'un
-   hakem hükmü de bu satır yazılırken **koşuyordu**.
+2. **BD-8 `main`'de ama CANLIDA HİÇ GÖRÜLMEDİ.** #230 (`800d5ee`) bir birim-testi + hakem iddiasıdır;
+   düzelttiği cümlenin canlı uçta doğru bastığı ölçülmedi (35 kr, deploy sonrası).
+   **#230'un CI'ı ÜÇ rerun istedi ve üçü de flake'ti — kapı fail-closed, dal suçlanmadı:**
+   `verify-db` PostgREST 502 ×2 (`setup-project` · `audit-runs` ×2 · `reaper` — **dört FARKLI test**,
+   yani flake teşhisi tuttu) + gece yarısı penceresi (00:00–00:30 UTC) · `advisories` "no
+   vulnerability summary" ×3 (23:47–00:55 UTC), `pnpm audit`'in canlı beslemesi boş özet döndürdüğü
+   için. **Üçü de kod değişmeden kırmızı verebilen kapılardır** — `verify.sh` ikisini de bu yüzden
+   koşmaz (CLAUDE.md kapı tablosu).
 3. **`*.db.test.ts` şeritleri işçi/hakem tarafından koşulmadı** (Docker). CI `verify-db`'de koşuldu
    ve yeşil geçti; ama **#229'un yeni jsonb alanları (`referring_links_attributes`,
    `window_link_attributes`) db şeridinde PİNSİZ** — yani o şeridin yeşili bu alanlar hakkında
