@@ -179,6 +179,32 @@ export function renderWindowCaption(
   const shown =
     `${label} — ${thousands(rows)} ${rows === 1 ? noun : plural} in this window ` +
     `(offset ${thousands(window.window_offset)}, limit ${thousands(window.window_limit)})`;
+  // AN EMPTY WINDOW'S `total_count: 0` IS NOT REPUBLISHED AS THE TARGET'S TOTAL — finding BD-8.
+  //
+  // MEASURED 2026-09-03 on a paid 35-credit lookup (dentnotion.com, limit 5, offset 19,000): no
+  // rows came back, `total_count` came back 0, and the caption below turned that into "DataForSEO
+  // counts 0 backlinks for this target in total" — printed three lines above this reply's OWN page
+  // rows carrying 175, 18 and 17 backlinks, for a subject `analyze_backlinks` measured at 242
+  // backlinks / 139 referring domains. The vendor's number is real; the sentence built on it was
+  // false.
+  //
+  // WHAT IS AND IS NOT KNOWN (signed lesson 16): that pairing was measured ONCE (dentnotion,
+  // 2026-09-03); the vendor's docs define `total_count` as the whole matching set and say nothing
+  // about offset. So this renderer asserts nothing about WHY the 0 arrived, and nothing about the
+  // target in either direction — an "the target does have backlinks" reading would be the same
+  // over-claim with the sign flipped. It states the two vendor facts under the vendor's own field
+  // name, declines to reuse that figure as a whole-profile count, and names the tool that does
+  // measure the profile (NEVER #7).
+  //
+  // The fork is EMPTINESS: with no rows in hand there is nothing that could corroborate the 0 as a
+  // statement about the target, and this renderer cannot see what offset 0 would have returned.
+  if (rows === 0 && window.vendor_total_count === 0) {
+    return (
+      `${shown}. DataForSEO returned no rows for this window and reported total_count 0 for it — ` +
+      `that 0 is the vendor's figure for this window as asked, and it is not used here as the ` +
+      `target's whole-profile count: analyze_backlinks reports the profile as a whole:`
+    );
+  }
   // `null` is the vendor DECLINING TO SAY. It is not 0, and it is not rows.length: either
   // substitution would publish a measurement of the whole set that nobody made.
   const whole =
