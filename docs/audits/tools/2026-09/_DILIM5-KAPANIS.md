@@ -27,7 +27,7 @@
 | İMZA KALEMİ | **5** (BC B-1 · C-2 · **C-6 yeni** · DC B-1 · DC B-4) |
 | ERTELENDİ | **0 bulgu düzeyinde** — erteleme SINIF düzeyindedir (kart 6/6 → kart dilimi; `dfs_spend` kaynak kolonu → operatör kuyruğu) |
 
-`canlı ✔` işaretli bulgu sayısı: **5** — AB-2, BD-1, BC B-4, C-1, LG B-1. Ayrıca **C-5 canlı
+`canlı ✔` işaretli bulgu sayısı: **6** — AB-2, BD-1, BC B-4, C-1, LG B-1 (deploy `ff71037`) ve **BD-8** (deploy `800d5ee`). Ayrıca **C-5 canlı
 ölçümle kapandı** (bir düzeltme değil, bir ölçüm boşluğuydu). Hepsi deploy **`ff71037`** (E+F+G),
 şef turu 2026-09-03 23:41 UTC, Δ −275 kredi, özneler dentnotion.com / adstark.com.tr.
 
@@ -36,7 +36,7 @@
 | tool | karar (kapanış) | kapatan PR'lar | canlı doğrulama | açık kalemler |
 |---|---|---|---|---|
 | `analyze_backlinks` | **KISMEN DÜZELTİLDİ** — 3 bulgu + 1 yarı kapandı | #229 (AB-2, AB-3, AB-1 tavan yarısı) · #227 (AB-5) | **✔ AB-2** (70 kr): `• Link attributes (DataForSEO referring_links_attributes): noopener 66 · nofollow 53 · noreferrer 21 · ugc 6` | AB-1 varsayılan `limit` **İMZA** · **AB-4 AÇIK** · **AB-6 AÇIK** · AB-3 canlıda ölçülmedi (`limit 50`) |
-| `backlink_details` | **KISMEN DÜZELTİLDİ** — 6 bulgu kapandı (BD-8 dahil), biri canlıda ölçülmedi | #229 (BD-1, BD-3) · #228 (BD-2, BD-7) · #227 (BD-6) · **#230 (BD-8, `800d5ee`)** | **✔ BD-1** (35 kr): `Individual backlinks — 0 backlinks in this window (offset 19,000, limit 5).` — **ve aynı satır BD-8'i açtı** | **BD-8 canlıda ölçülmedi** (#230 `main`'de) · **BD-4 AÇIK** · **BD-5 AÇIK** · BD-3 canlıda ölçülemedi (pencere boştu) |
+| `backlink_details` | **KISMEN DÜZELTİLDİ** — 6 bulgu kapandı (BD-8 dahil), 1 yeni doğdu | #229 (BD-1, BD-3) · #228 (BD-2, BD-7) · #227 (BD-6) · **#230 (BD-8, `800d5ee`)** | **✔ BD-1 ve ✔ BD-8** (35+35 kr): `Individual backlinks — 0 backlinks in this window (offset 19,000, limit 5).` — **ve aynı satır BD-8'i açtı** | **BD-4 AÇIK** · **BD-5 AÇIK** · BD-3 canlıda ölçülemedi (pencere boştu) |
 | `backlink_changes` | **KAPANDI** — 5 bulgunun 5'i kapandı (üç P1 dahil) | #228 (B-2, B-4, B-5, B-6) · #227 (B-3) | **✔ B-4** (35 kr): `• 2026-09-06 — 2 new / 2 lost backlinks … — PARTIAL: this period has not ended yet` | **B-1 İMZA** (core-update takvimi) · B-2'nin canlı ay-sonu hâli ölçülemedi (bir takvim günü ister) |
 | `compare_competitors` | **KISMEN DÜZELTİLDİ** — 3 kalem kapandı (biri ölçümle), 1 yeni doğdu | #228 (C-1) · #227 (C-3) | **✔ C-1** (90 kr): `This lookup used the DEFAULT locale — the United States, in English — but adstark.com.tr is a .tr domain…`; **C-5 aynı çağrıyla kapandı** — `the target against the top 3 of 119 competitors DataForSEO found` | **C-6 YENİ + İMZA** (keşif modu hiç karşılaştırma basmıyor) · **C-2 İMZA** · **C-4 AÇIK** |
 | `link_gap` | **KAPANDI** — 4 bulgunun 4'ü kapandı (tek P1 dahil) | #229 (B-1) · #228 (B-2, B-4) · #227 (B-3) | **✔ B-1** (45 kr): `… · referring_pages_nofollow 0 · referring_domains_nofollow 0 · spam score …` satıcı adıyla; vendor SIRASI korunmuş | **B-5 AÇIK** (kesilme cümlesi `limit`'i adlandırmıyor — `keyword_gap` G-2'nin kardeşi, o da açık) |
@@ -120,7 +120,6 @@ Hakemin 8 kaleminin **2'si kapandı** (7: keşif ölçümü koştu · 8: DK-3 id
 
 | kalem | kaynak | not |
 |---|---|---|
-| **#230 (paket H) deploy + canlı sonda** | bu dosya | **Merge oldu** (`800d5ee`, 01:00 UTC). Kalan tek iş: deploy sonrası BD-8'i canlıda ölç (35 kr) → `backlink_details` BD-8 hücresi `KAPANDI #230 + canlı ✔` olur — **tek hücre, şef günceller** |
 | `dfs_spend.status='failed'` migration | #227 · sınıf D4-9 | Başarısız çok istekli satır tek istekliden ayırt edilemiyor |
 | M-08 prod migration journal (0022–0033) | Dilim 3'ten devir | Sınıf D4-9 bunun arkasında — DÖRDÜNCÜ dilimde de açık |
 | Yukarıdaki 9 imza kalemi | imza tablosu | Üçü metin/ürün, biri para okunuşu |
@@ -146,9 +145,9 @@ diye sayılmamıştır.
 1. **`disavow_candidates` canlıda hiç koşulmadı** (40 kredi) — ve bu **kasten**: politika metni imza
    kaleminde olduğu için sonda atlandı. Kaydın üç `KAPANDI` satırı (B-3, B-5, B-6) birim testine ve
    paylaşılan sabitin BAŞKA tool yüzeylerindeki canlı kanıtına dayanıyor.
-2. **BD-8 `main`'de ama CANLIDA HİÇ GÖRÜLMEDİ.** #230 (`800d5ee`) bir birim-testi + hakem iddiasıdır;
-   düzelttiği cümlenin canlı uçta doğru bastığı ölçülmedi (35 kr, deploy sonrası).
-   **#230'un CI'ı ÜÇ rerun istedi ve üçü de flake'ti — kapı fail-closed, dal suçlanmadı:**
+2. **BD-8 canlıda doğrulandı** (deploy `800d5ee`, 01:07 UTC, 35 kr) — ama tek bir çağrıda: satıcının
+   pencere-dışı `total_count 0` davranışı hâlâ **canlı gözlemden çıkarılmış** bir teşhistir,
+   DataForSEO dokümanından değil. **#230'un CI'ı ÜÇ rerun istedi ve üçü de flake'ti — kapı fail-closed, dal suçlanmadı:**
    `verify-db` PostgREST 502 ×2 (`setup-project` · `audit-runs` ×2 · `reaper` — **dört FARKLI test**,
    yani flake teşhisi tuttu) + gece yarısı penceresi (00:00–00:30 UTC) · `advisories` "no
    vulnerability summary" ×3 (23:47–00:55 UTC), `pnpm audit`'in canlı beslemesi boş özet döndürdüğü
@@ -203,12 +202,13 @@ beşi de `project:` kapsamlı, **refund yok**. Vendor tarafı ≈ **$0,5** gerç
   kardeşleri listede — **vendor sırası korunmuş**.
 - **`backlink_changes`** (dentnotion, `week ×4`): `• 2026-09-06 — 2 new / 2 lost backlinks … —
   PARTIAL: this period has not ended yet`, iki seride de → **BC B-4 ✔**.
+- **`backlink_details` ikinci sonda** (2026-09-04 01:07 UTC, deploy `800d5ee`, `-35 · project: dentnotion.com`): `Individual backlinks — 0 backlinks in this window (offset 19,000, limit 5). DataForSEO returned no rows for this window and reported total_count 0 for it — that 0 is the vendor's figure for this window as asked, and it is not used here as the target's whole-profile count: analyze_backlinks reports the profile as a whole:` → **BD-8 ✔**, yanlış toplam iddiası gitti.
 - **Ölçülmeyen bu turda:** `disavow_candidates` canlı (40 kr, kasten) · AB-1 tavanı (`limit:1000`) ·
   BC B-2 ay-sonu · paket E'nin hata yolu · BD-3'ün link başına `attributes` satırı (pencere boştu).
 
 ## Kredi
 
-Dilim 5 toplamı **745 kredi** = ölçüm turu 470 + kapanış canlı turu 275. Bakiye **3532 → 2787**,
-defterle birebir. **Hiçbir kredi fiyatı, marj ya da paket rakamı değişmedi** (NEVER#6; dört PR'ın
+Dilim 5 toplamı **780 kredi** = ölçüm turu 470 + kapanış canlı turu 275 + BD-8 sondası 35. Bakiye
+**3532 → 2752**, defterle birebir. **Hiçbir kredi fiyatı, marj ya da paket rakamı değişmedi** (NEVER#6; beş PR'ın
 `credits/costs.ts` diff'i BOŞ — ölçüldü). Vendor gerçeği: ölçüm turu ≈ $0,47 + kapanış ≈ $0,5;
 `ESTIMATED_BACKLINK_PROFILE_CALL_USD` sabiti tek uçta 3,8× fazla ayırmayı sürdürüyor (imza kalemi 4).
