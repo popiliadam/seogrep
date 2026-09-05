@@ -410,18 +410,6 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
   });
 
   /**
-   * S1-b, ON THE SURFACE THAT PAID FOR IT. Measured live 2026-09-04:
-   * `{domain: "adstark.com.tr", bogus_nested: "x"}` came back with NO `isError`, the unknown key
-   * silently dropped, and the ledger carrying `-180`. It is the top-level S1 hole one level down,
-   * on the tool where a call costs up to 900 credits — and the expensive shape is not a joke key
-   * but a mistyped `label`, which is the vendor's `aggregation_key` and therefore what rows are
-   * matched on: a dropped `labell` hands a competitor's row a caption nobody chose.
-   *
-   * The refusal must be FREE and must NAME the key. `serving()` reaches the credit guard and
-   * throws on SUPABASE, so a call that got as far as the handler could not return an isError
-   * result at all — which is what makes this assertion a pre-reserve one.
-   */
-  /**
    * H-1 ON THE DEARER SURFACE. `buildAiVisibilityCompareRequestBody` sends the same `localeKeys`
    * to `cross_aggregated_metrics`, and the vendor publishes the same rule for it: "chat_gpt data
    * is available for United States only" / "for English only" (DataForSEO, read 2026-09-04). The
@@ -449,6 +437,18 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
     ).rejects.toThrow(/SUPABASE/i);
   });
 
+  /**
+   * S1-b, ON THE SURFACE THAT PAID FOR IT. Measured live 2026-09-04:
+   * `{domain: "adstark.com.tr", bogus_nested: "x"}` came back with NO `isError`, the unknown key
+   * silently dropped, and the ledger carrying `-180`. It is the top-level S1 hole one level down,
+   * on the tool where a call costs up to 900 credits — and the expensive shape is not a joke key
+   * but a mistyped `label`, which is the vendor's `aggregation_key` and therefore what rows are
+   * matched on: a dropped `labell` hands a competitor's row a caption nobody chose.
+   *
+   * The refusal must be FREE and must NAME the key. `serving()` reaches the credit guard and
+   * throws on SUPABASE, so a call that got as far as the handler could not return an isError
+   * result at all — which is what makes this assertion a pre-reserve one.
+   */
   it("refuses an unknown key INSIDE a target — free, named, and before the handler", async () => {
     const nested = await serving().run(CTX, {
       targets: [{ domain: "a.com", bogus_nested: "x" }, { domain: "b.com" }],
