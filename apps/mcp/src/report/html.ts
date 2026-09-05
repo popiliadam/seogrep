@@ -290,6 +290,26 @@ function unclassifiedStatusBlock(tech: TechSummary): string {
  * Every threshold in the copy is INTERPOLATED FROM THE RULE'S OWN CONSTANT, never retyped, so the
  * number a reader is given and the number the rule used cannot drift apart (audit/format.ts).
  */
+/**
+ * WHY "Redirects (3xx) = 0" AND "Redirect chains (2+ hops) (7)" ARE BOTH TRUE (GR-7).
+ *
+ * Measured live 2026-09-04: a report printed exactly that pair, side by side, with nothing saying
+ * they count different populations. They do. The status counters count CRAWLED PAGES by their
+ * final status, while a chain is the sequence the crawler followed to reach one — its intermediate
+ * hops are never crawled pages, so they can never appear in the 3xx tally. Two numbers that look
+ * like they contradict each other, and a reader with no way to tell that they do not.
+ *
+ * The pattern is `unclassifiedStatusBlock`'s, one section above: when a set of numbers does not
+ * add up the way a reader would expect, the document says so in its own words rather than leaving
+ * the arithmetic as an exercise. Printed only when there IS a chain list to explain.
+ */
+function redirectPopulationNote(tech: TechSummary): string {
+  if (tech.redirectChains.total === 0) return "";
+  return `<p class="hint">These two numbers count different things: the status counts above are
+    CRAWLED pages by their final status, while the intermediate hops of a chain are never crawled
+    pages — so a site can show 0 redirects and still have chains here.</p>`;
+}
+
 function techSection(tech: TechSummary): string {
   return `<section class="rpt">
     <h2>Technical health</h2>
@@ -311,7 +331,7 @@ function techSection(tech: TechSummary): string {
       `Redirect chains (${fmtNum(REDIRECT_CHAIN_MIN)}+ hops)`,
       tech.redirectChains,
       (c) => [...c.chain, c.url].map(urlText).join(" → "),
-    )}
+    )}${redirectPopulationNote(tech)}
     ${listBlock(
       "X-Robots-Tag conflicts (header says noindex, meta does not)",
       tech.xRobotsConflicts,
@@ -441,6 +461,19 @@ function schemaSection(schema: SchemaSummary): string {
         against the stored JSON-LD bodies on ${fmtNum(schema.pagesValidated)} page(s).`
       : `Detection is JSON-LD only (microdata/RDFa are not read); only @type names are analyzed,
         never the JSON-LD body.`;
+  // WHAT THE @type LIST IS A LIST OF (GR-6). Measured live 2026-09-04: the top five read
+  // `Dentist · BreadcrumbList · ListItem · Person · GeoCoordinates`, in one undifferentiated
+  // column. ListItem and GeoCoordinates are NESTED NODES inside the entries above them and produce
+  // no rich result on their own, so five rows read as five kinds of coverage where there are two
+  // or three. The counting is audit_schema's and is not changed here; what changes is that the
+  // report says which population it is showing instead of letting the reader assume.
+  const typePopulation =
+    schema.topTypes.length === 0
+      ? ""
+      : `<p class="hint">These are the @type names the pages DECLARE, nested nodes included — a
+        type such as <code>ListItem</code> or <code>GeoCoordinates</code> sits inside another
+        entry rather than being eligible for a rich result on its own. Run
+        <code>audit_schema</code> for the per-page breakdown.</p>`;
   return `<section class="rpt">
     <h2>Structured data</h2>
     <div class="stats">
@@ -449,6 +482,7 @@ function schemaSection(schema: SchemaSummary): string {
       ${statBlock(schema.pageCount, "Pages crawled")}
     </div>
     ${types}
+    ${typePopulation}
     ${listBlock(
       "Required fields missing",
       schema.missingFields,

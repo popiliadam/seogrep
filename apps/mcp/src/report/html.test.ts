@@ -1100,6 +1100,48 @@ describe("Opportunities section (R1-b)", () => {
   });
 });
 
+/**
+ * TWO NUMBERS THAT LOOK LIKE THEY DISAGREE, AND ONE THAT LOOKS LIKE FIVE THINGS (GR-6, GR-7).
+ *
+ * Both were measured on the same live 15-credit report, 2026-09-04, and both are the same class
+ * of defect: a figure whose POPULATION is not the one the reader assumes, with nothing on the
+ * page to say so. Neither number changes here — the counting belongs to the audit engines — only
+ * what the document says about what it is counting.
+ */
+describe("the report says WHAT its numbers count (GR-6, GR-7)", () => {
+  it("explains that redirect chains and the 3xx count are different populations", () => {
+    const html = renderReportHtml(ENRICHED);
+    expect(html).toMatch(/Redirect chains/);
+    expect(html).toMatch(/count different things/i);
+    // The source wraps this sentence across lines, so the pin is the shortest distinguishing
+    // phrase that survives the wrap (signed lesson 11), not a copy of the source literal.
+    expect(html).toMatch(/intermediate hops of a chain are never crawled/i);
+  });
+
+  it("says nothing about populations when there is no chain list to explain", () => {
+    // FULL_MODEL has no chains: an explanation of a comparison nobody can make is noise.
+    expect(renderReportHtml(FULL_MODEL)).not.toMatch(/count different things/i);
+  });
+
+  it("says the @type list includes nested nodes, which are not rich-result types", () => {
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).toMatch(/@type names the pages DECLARE, nested nodes included/i);
+
+    // The two names the live report showed as if they were coverage of their own.
+    expect(html).toMatch(/ListItem/);
+    expect(html).toMatch(/GeoCoordinates/);
+  });
+
+  it("says nothing about the @type population when no type was found", () => {
+    const noTypes = renderReportHtml({
+      ...FULL_MODEL,
+      schema: { ...FULL_MODEL.schema!, topTypes: [] },
+    });
+    expect(noTypes).toMatch(/No JSON-LD structured data found/);
+    expect(noTypes).not.toMatch(/nested nodes included/i);
+  });
+});
+
 describe("absence is not a finding (R1-a)", () => {
   // FULL_MODEL is an ordinary crawl: every signal list empty, exactly as a crawl taken before
   // those signals existed. A "Slow pages: 0" header would report a measurement that, on the older
