@@ -129,3 +129,120 @@ imzalar geldikçe **P7 → P8 → P9 → P6 → P10**, en sona **P13/P15** (böl
 
 ---
 
+## 4. Canlı ölçüm planı — kalan boşluklar
+
+| tool | argüman | kredi | hangi bulguyu kapatır |
+|---|---|---|---|
+| `ai_visibility` | `google` + `"Turkiye"` mutlu yolu | **90** | #235'in TEK canlı hücresi; vendor'ın o lokal için veri döndürdüğü bugün bir **VARSAYIM** (H-10) |
+| `ai_visibility_compare` | 2–3 hedef | **180–900** | AVC-1 · AVC-2 · AVC-4 (bugün **yalnız birim testi** düzeyinde kanıtlı; tool tur boyunca **hiç koşulmadı**) |
+| `disavow_candidates` | proje + varsayılan | **40** | DC B-1/B-4 politika metninin canlı hâli — **imza #17 sonrasına bağlı**, kasten atlandı |
+| `ranked_keywords` | proje | **65** | Dilim 4'ün dört düzeltmesi bugün yalnız birim testi iddiası (B-4 imza bağlamı dahil) |
+| `keyword_gap` | proje + rakip | **45** | G-1/G-3/G-4 canlıda hiç görülmedi; G-2 kesilme cümlesi |
+| `generate_report` | crawl var/GSC yok **ve tersi** | **15** | GR-10 — **önce özne ÜRETİLMELİ** (mevcut iki özne de her iki veriyi taşıyor) |
+| `crawl_site` | 1 sayfalık dar crawl | **20** | `list_jobs` B-3 + `get_job_status` §4: `queued`/`running` dalları (2026-08-27'den devreden; operatör izin verdi, **harness sınıflandırıcısı ücretli çağrıyı reddetti**) |
+
+**Toplam: 455–1175 kredi** (`ai_visibility_compare`'in bandı belirsizliğin tamamı).
+Bakiye 2026-09-05 07:24 UTC itibarıyla **2347** (`get_credit_balance` defteri).
+**DFS/ödenek notu:** günlük vendor tavanı **$3** (`guardrails/dfs-budget.sh`); turda ölçülen en yüksek
+gün **$0,149**. Tavan bugün **TAHMİNLE** sayılıyor (sınıf D4-9) — `dfs_spend.actual_usd` vendor'ın
+`cost`'u ile bizim tahminimizi ayırt etmiyor, ölçülen sapmalar **4,5×** ve **3,8×**. Yani bu planın
+vendor maliyeti tavana karşı **güvenilir biçimde ölçülemez**; kaynak kolonu migration'ı (operatör
+kuyruğu) bundan önce gelirse plan gerçek maliyetle ölçülür.
+
+---
+
+## 5. Operatör kararları — 30 kalem (`KARAR:` sütununu OPERATÖR doldurur)
+
+Kaynak: `_TUR-KAPANIS.md` § "Operatöre TEK imza listesi". **Hiçbiri bloke etmiyor**, ama yukarıdaki
+grafikte 8 paket bunlara bağlı. Öneriler kayıtların kendi `önerilen düzeltme` sütunundan alındı;
+"öneri yok" yazan yerde kayıt bir yön önermemiştir.
+
+| # | kalem | kayıt | seçenekler | şefin ÖNERİSİ (kayıttan) | KARAR |
+|---|---|---|---|---|---|
+| 1 | Tavsiye kataloğu donmuş: 38 tool'un 22'si `whats_next` merdiveninde hiç anılmıyor | `whats_next` F-1 | A) sonraki-dalga listesi ekle · B) dışarıda kalan her tool'a tek cümlelik yazılı gerekçe · C) değişme | B (ucuz, geri alınabilir; `disavow_candidates` gerekçesi zaten var, yazılı değil) | |
+| 2 | `You were not charged.` 0-kredilik tool'da anlamsız güvence | `untrack_project` UP-2 | A) ücretsiz tool'larda son cümle düşsün · B) `connect_gsc` paylaşılan cümleye geçsin · C) ikisi de kalsın | A veya B — **"ikisini birden bırakmak en kötü seçenek"** (kaydın kendi cümlesi) | |
+| 3 | İş-kuralı reddinde `isError` bayrağı yüzey genelinde tek kurala bağlansın | `whats_next` F-5 | A) hepsi `textResult` · B) hepsi `errorResult` · C) kural yazılıp bugünkü karışıklık kalsın | Yön yok; kayıt yalnız "tek kural" diyor — **DAVRANIŞ değişikliği** | |
+| 4 | Ölçümün üçüncü taraf sağlayıcıdan geçtiğinin söylenmesi | `track_keywords` F-9 | A) tool metnine · B) yalnız docs sayfasına · C) hiçbiri | B — "docs sayfasında olması **yeterli olabilir**, tool metnine eklemek gerekmez" | |
+| 5 | **Özdeş denetimin ücretsiz tekrarı ya da `confirm` kapısı — üç audit TEK imzada** | `audit_tech` T-B5b · `audit_schema` S-B5b · `audit_onpage` A-3b | A) kayıtlı raporu ücretsiz döndür · B) `confirm` gelene kadar reddet · C) bugünkü gibi yeniden ücretlendir | Yön yok (NEVER#6). Kayıt şunu şart koşuyor: **üçü tek imzada** — 5/15/30 için farklı politika müşteriye açıklanamaz | |
+| 6 | "You were not charged." ↔ defterdeki `charge`+`refund` çifti | `audit_tech` T-B11 · `audit_schema` S-B9 | A) redde "(bir rezerv açılıp kapanır…)" ek cümlesi · B) defterde iade edilmiş çifti gizle · C) değişme | A — sistem doğru (append-only, NEVER#2), **düzeltilecek olan KELİME** | |
+| 7 | `audit_speed` mobil ekseni (`for_mobile`) — vendor maliyetini ×2 yapar | `audit_speed` B-9 (uzun vadeli yarı) | A) mobil ekseni ekle (maliyet ×2) · B) yalnız "desktop" demeye devam · C) mobil ayrı ücretli mod | B kısa vade **UYGULANDI** (#209: `for_mobile:false` açıkça gönderiliyor, başlık "desktop"). Uzun vade **fiyat kararı** — `MAX_SPEED_URLS=5` imzalı fiyatın parçası | |
+| 8 | `find_quick_wins` sıralama politikası | FQW B-1b | A) sıralama aynı, yalnız B-1a cümlesi · B) aynı gösterim bandında CTR'ı düşük sonra gelsin · C) ikinci bir "CTR yüksek, pozisyon yakın" listesi | A — "**en ucuzu ve geri alınabilir olanı**" (kaydın kendi sıralaması) | |
+| 9 | `keyword_positions` ücretsiz kapının `not_measured` hâli | `keyword_positions` F-7 | A) kapı `count>0` yerine "ranked/absent satırı var mı"ya baksın · B) yalnız-`not_measured` cevap ücretsiz ret dönsün · C) değişme | A veya B — ikisi de **ücretlendirme davranışı** değişikliği (NEVER#6) | |
+| 10 | `discover_keywords` 100.000 hacim tavanı (**iki ayrı canlı ölçümde de işlevsiz**) — **P1** | DK-1 | A) tavanı ölçülmüş bandın altına indir · B) tavanı bırak, uyarıyı sertleştir · C) kaynaktaki "ulusal sınıfın altında" gerekçesini ÖLÇÜMLE değiştir | Üç şık da kayıtta; tavan **fiyat kontrolü DEĞİL** (kaynak bunu söylüyor), yani A imzası ucuz | |
+| 11 | `discover_keywords` deterministik kova-içi sıralama | DK-2 (P1'in yarısı) | A) kriter bloğuna tek cümle (yuvarlanmış vendor değerleri + eşit değerli satırların sırası anlamsız) · B) sıralamayı deterministik yap · C) değişme | A — `research_keywords` RK-1 ile **TEK metin kalemi** olarak imzalanabilir | |
+| 12 | `my_pages` `item_types` enum daraltma + "failed unexpectedly" metni | `my_pages` A-3 (P1'in yarısı) | A) enum'u gerçekten çalışan değerlere daralt · B) hata metnini düzelt, enum kalsın · C) ikisi | **ÖNCE TEŞHİS** — hata satıcıdan mı ayrıştırıcıdan mı; sunucu log'u `457d2b7d` referansıyla okunmalı. **Kayıt bunu ölçemedi** | |
+| 13 | `my_pages` ADI | `my_pages` A-7 | A) ad değişsin (örn. `ranking_pages`) · B) docs'a tek yönlendirme satırı · C) değişme | B — "ucuz alternatif"; A **müşteri yüzeyini kırar** | |
+| 14 | `costs.ts:60` gerekçe bloğu (**rakam DEĞİŞMEZ**) | `ranked_keywords` B-4 | A) `my_pages` biçiminde blok yaz · B) boş bırak | A — Labs tarifesi ($0.012/istek + $0.00012/satır, adaptörde `:44-45` ölçülü) + 1.000 satır tavanının imzalı en-kötü hâli + "no existing number moved" | |
+| 15 | Kısmi başarısızlıkta fiyat politikası | `serp_snapshot` S-6 | A) kısmi başarısızlıkta orantılı iade · B) tam ücret (bugünkü) · C) ölçülmeden karar yok | **ÖNCE BİRİM TESTİYLE ÖLÇ** — hipotez: 2 kelimelik çağrının 1'i `not_measured` dönerse tenant 21 kredinin tamamını ödüyor | |
+| 16 | Prod'daki bayat `Turkey` serisi (dentnotion) — veri kararı | `serp_snapshot` S-3 | A) bayat satırları operatör temizlesin · B) `not_measured` serinin başlığında reddin LOKASYON ADINA ait olduğu yazılsın · C) ikisi | Yazan taraf için **ek iş YOK** (ücretsiz reddediliyor); karar okuma tarafında | |
+| 17 | **Disavow politika metni** — **P1, turun en riskli metin kalemi** | DC B-1 + B-4 | A) çıktının BAŞINA manual-action şartı + "çoğu site kullanmaz" · B) yalnız docs'a · C) değişme | A — "liste okunmadan görülmeli"; ayrıca `DISAVOW_FILE_CAPTION` (`:334`) iki cümle: Domain property kabul edilmiyor + işleme **haftalar sürer**. `goals/` predicate'iyle | |
+| 18 | `analyze_backlinks` varsayılan `limit` 1000 düşürülsün mü | AB-1 (P1'in yarısı) | A) varsayılan maksimumdan ayrılsın (kardeşte 50) · B) 1000 kalsın · C) yalnız tavan cümlesi (KAPANDI #229) | A — `backlink_details` emsali hazır ve **davranışı test edilmiş** | |
+| 19 | `ESTIMATED_BACKLINK_PROFILE_CALL_USD = 0.3` (gerçek 0,0783 — **3,8×**) | `analyze_backlinks` §4 | A) sabiti ölçülen değere indir · B) bırak (muhafazakâr tahmin) · C) `dfs_spend` kaynak kolonundan sonra ölç | Öneri yok — kayıt yalnız sapmayı ölçüyor. **D4-9 ile aynı kökten** | |
+| 20 | `backlink_changes` / `compare_competitors` takvim bağlama cümlesi | BC B-1 · C-2 | A) pencere tarihlenip takvim bağlansın · B) yalnız takvim cümlesi · C) değişme | A, **ve sıra bağlayıcı: ÖNCE pencere TARİHLENİR** (`compare_competitors`'ta pencere bugün tarihsiz; tarihsiz sayaçtan takvim iddiası çıkmaz) | |
+| 21 | `compare_competitors` keşif modu hiç karşılaştırma basmıyor | C-6 | A) keşifte hedefin rakamları da aynı uçtan okunsun (**ek satıcı maliyeti**) · B) description keşfin karşılaştırma ÜRETMEDİĞİNİ söylesin, fiyat aynı · C) keşif ayrı/daha ucuz mod | Üçü de kayıtta, **üçü de imza gerektirir**. Kod kusuru değil: "cümle dürüst, ürün boş" | |
+| 22 | NOFOLLOW markerlarının "Google does not count" düz iddiası | `link_gap` + `NOFOLLOW_ONLY_MARKER` | A) "hint" diline geç · B) bırak | A — Google 2019'dan beri `nofollow`'u **hint** olarak okuyor (D5 sınıf 10) | |
+| 23 | **AV-3 doktrin yönü:** vendor'ın $0 reddi bugünün bütçesini serbest bırakır mı — **14 port TEK kural** | AV-3 · H-9 | A) `budget.ts` doktrini geçerli, port `settleFailedSpend`'e geçsin · B) `llm-mentions` gerekçesi kabul, `budget.ts` şerh alsın | Yön yok — **çatışmayı bir insan çözmeli**; bugün `budget.ts` ile `llm-mentions` ZIT iddiada | |
+| 24 | **AV-4 / H-5 fiyat doktrini** — **P1** | AV-4 · H-5 | A) `internal_list_limit`'i fiyat tabanı olmaktan çıkar · B) vendor'dan faturalanan satır tavanı alınana kadar bekle · C) rakamı değiştir (NEVER#6) | B + A'nın ara adımı — 5,58× marj hesabı `MAX_INTERNAL_LIST_ROWS=100` varsayımına dayanıyordu; **ölçülen faturalanan satır ≈1**, o çağrıda marj **≈22×** | |
+| 25 | **H-1 lokal ürün kararı ONAYI** (geriye dönük) | AV-1/H-1 | A) onayla (bugünkü hâl: `chat_gpt` için lokal alanlar **sert ret**) · B) geri al | A — **UYGULANDI (#234) ve canlıda doğrulandı**; onay geriye dönük isteniyor | |
+| 26 | `ai_visibility_compare` "cevapsız bir hedef de tam fiyat ödetir" cümlesi | AVC-3 | A) fiyat cümlesine tek cümle ek · B) değişme | A — davranış **doğrudur** (vendor cevap verdi), yalnız **duyurulmamış** | |
+| 27 | `generate_report` GSC rakamlarının AI yüzeylerini kapsayıp kapsamadığı | GR-5 | A) tek cümlelik kapsam ifadesi ("these are Search Console web-search figures") · B) `ai_visibility`'ye yönlendirme (audit_speed/audit_schema emsali) · C) ikisi | A veya B — emsal repoda hazır | |
+| 28 | `ai_visibility` crawler-token cümlesi (`OAI-SearchBot`) — **iki yönlü** | AV-7 | A) sıfır satırda tek kaynak-atıflı cümle · B) liste ekle (**bayatlama riski AÇILIR**) · C) değişme | A — bugün risk **karşılıksız**; B seçilirse bakım borcu doğar | |
+| 29 | **Referans şerhleri** — "şerh mi kalıcı düzeltme mi" (D4-10, **dört tekrar**) | dört dilimin §5'leri | A) şerhler kalıcı metne dönüşsün · B) şerh olarak kalsın + bunu ölçen kontrol yazılsın · C) değişme | Öneri yok. Ölçülmüş olgu: **hiçbir satır silinmedi** ve **hiçbir kapı** bir referans satırının karşılığı olup olmadığına bakmıyor | |
+| 30 | **Rakip domain** — `link_gap` / `keyword_gap` hâlâ elle girdi bekliyor | tur geneli (D4–D5) | A) `compare_competitors` keşfini iki tool'a bağla · B) elle kalsın | Öneri yok; `compare_competitors` keşfi kalemi **KISMEN** çözdü (C-5 kapandı) | |
+
+---
+
+## 6. Operatör ortam kuyruğu (kod değil: ortam / veri / migration)
+
+| # | kalem | kaynak | not |
+|---|---|---|---|
+| O-1 | `jobs` **kısmi benzersiz indeksi** | tur geneli operatör kuyruğu | migration; prod'da uygulanmadı |
+| O-2 | `dfs_spend.status='failed'` değeri | D5 sınıf 11 (#227 "Ölçülmeyen") · sınıf D4-9 | migration; #227 çok istekli portları TÜM-ÇAĞRI tabanına geçirdi, `failed` değeri yok |
+| O-3 | `dfs_spend` **kaynak kolonu** (vendor `cost` ↔ bizim tahmin) | DK-5 · RK-6 · H-5 (D4-9) | migration; bugün `extract…CostUsd(raw) ?? estimate` **ikisini aynı kolona yazıyor**. §4'ün bütçe ölçümü buna bağlı |
+| O-4 | **M-08 prod migration journal (0022–0033)** | `_TUR-KAPANIS.md` operatör kuyruğu · MEMORY.md | Depoda son migration **`0033_credit_ledger_project_scope.sql`** (ölçüldü). `check-migration-journal.sh` **çalışan SQL'in dosyayla aynı olduğunu ölçmez**, yalnız sürüm adlarını karşılaştırır |
+| O-5 | Prod'daki **açık `relevant_pages` rezervasyonu** | tur geneli | veri onarımı; DK-3 ailesinin canlı kalıntısı |
+| O-6 | `google` için LLM Mentions lokal listesinin **cache'lenmesi** | D6 operatör kuyruğu | ayrı iş; bugün `checkLocationName` **SERP listesine karşı** doğruluyor |
+| O-7 | `plan.mjs`'in `ai_visibility` EXCLUDED gerekçesi (H-1 sonrası) | D6 | P3 ile birlikte kesilebilir |
+| O-8 | `locations.ts` ret metni AI bağlamında "paid search" diyor | D6 | tool adı parametresi; küçük kod işi ama karar operatörde |
+| O-9 | **Prod'daki bayat `Turkey` serisi (dentnotion)** | `serp_snapshot` S-3 · `keyword_positions` F-8 | veri kararı (imza #16) |
+| O-10 | **Özne üretimi:** "crawl var / GSC yok" ve tersi | GR-10 · P11 | üçüncü bir özne gerekiyor; `example.net` ikisini de taşımıyor |
+| O-11 | **`pseo-wt/` worktree temizliği — silme = OPERATÖR ONAYI** | tur geneli | ölçüldü ↓ |
+
+### O-11 — `git worktree list` ölçümü (2026-09-05)
+
+```
+toplam worktree girdisi: 107 (ana depo dahil) → pseo-wt/ altında 106
+  dallı: 95   ·   detached HEAD: 12   ( + bu turun `kalanlar`'ı )
+main'e MERGE edilmiş dal: 95 / 95        (git merge-base --is-ancestor <dal> origin/main)
+detached HEAD'lerin 12/12'si de origin/main'in atası
+KİRLİ (commit'lenmemiş değişiklik taşıyan) worktree: 0 / 106
+```
+
+**Yani 106 worktree'nin tamamı temiz ve tamamının işi `main`'de.** Silme yine de operatör onayı ister
+(global kural: `rm` sorar). Bu turun kendi worktree'si `/Users/apple/dev/pseo-wt/kalanlar`
+(`docs/kalanlar-backlog`) **merge edilene kadar silinmez**. Komut önerisi (operatör koşar):
+`git worktree list --porcelain` ile doğrula → `git worktree remove <yol>` → `git worktree prune`.
+
+---
+
+## 7. Taze oturumun ilk 5 adımı
+
+1. **`git fetch origin`** ve `main`'in gerçekten `ef950c3`'te (ya da daha ilerde) olduğunu ölç.
+   Kalıcı tuzak: 2026-09-02'de üç işçi bir PR gerideki tabanda ölçtü. Dallanmadan önce fetch.
+2. **Bu dosyayı + ek dosyayı oku**, sonra `_TUR-KAPANIS.md`'yi. §2'nin **T-5** satırını ilk iş olarak
+   ölç (`keyword_positions` F-5 bayat mı) — doğruysa ERTELENDİ 11 → 10 ve kayıt güncellenir (ders 16).
+3. **Operatör kararları alındı mı?** §5'in `KARAR:` sütunu boşsa: imzasız paketlerle başlanır
+   (**P3 · P16 · P5 · P1'in imzasız 4 kalemi · P2**). **İmzasız dispatch yok** — CLAUDE.md NEVER#6/#7.
+4. **Paket sırası:** §3'ün bağımlılık grafı. P2, P13 ve P15 tek iş emrine SIĞMAZ — aileye göre bölünür
+   (NEVER#10: tek commit >200 satır → böl; task diff >400 → hakem **Fable**).
+   Paralel işçiler **ayrı worktree'de** koşar (ders 8) — ama önce O-11 temizliği düşünülür.
+5. **Kapı komutları — CLAUDE.md § "Komutlar ve kapı kapsamı" tablosundan, EZBERDEN DEĞİL:**
+   `make verify` (secret taraması **YOK**, DB şeritleri **YOK**) · `make verify-db` (Docker;
+   00:00–00:30 UTC'de her dalda kırmızı) · `make goals` (env yoksa SKIP, çıkış 97).
+   Yeşil kapı **ne ölçtüğüyle** raporlanır (ders 7).
+
+**Kalıcı tuzaklar — pointer, kopya değil:** `docs/plans/2026-09-03-TOOL-TURU-handoff.md` §
+"Kalıcı tuzaklar" (verify-db PostgREST 502 flake'i · gece yarısı penceresi · `advisories` fail-closed ·
+kardeş PR BEHIND + auto-merge kapalı · `cmd | tail` sonrası `$?` tuzağı · mutasyon deneyleri `dist`
+mtime'ını bozar · canlı sonda script'i her oturumda yeniden yazılır · **`MCP_SMOKE_URL` yolunda
+canlı anahtar var, ASLA basma** · MCP'nin kendi seogrep bağlantısı tur boyunca 404'tü).
