@@ -573,10 +573,13 @@ export function createLiveSpeedClient(opts: LiveSpeedOptions): SpeedPort {
       if (failure && failure.status === "rejected") {
         // Closed at the reservation's OWN estimate — see the doc comment above for why that number
         // and not the responses that did come back. Here rather than in a `finally` on purpose: a
-        // `finally` would also run after the success settlement below and turn every healthy
-        // lookup into a doomed second settle, which settleSpend swallows — leaving the row alive
-        // carrying the estimate instead of the real cost. settleFailedSpend never throws, so the
-        // ORIGINAL vendor error is still the one the caller sees.
+        // `finally` wrapping this fan-out would also run AFTER the success settlement below, so
+        // every healthy lookup would attempt a doomed second settle. The ledger rejects it and
+        // settleSpend SWALLOWS the rejection, which is quieter than it sounds: the row keeps its
+        // REAL cost and no assertion about that row goes red. The symptom is a false "WAKE THE
+        // HUMAN" line on every healthy call, teaching the operator to ignore the one signal that
+        // means money — so the spec asserts the settle COUNT, not the row. settleFailedSpend
+        // never throws, so the ORIGINAL vendor error is still the one the caller sees.
         await settleFailedSpend(reservation, ledger);
         throw failure.reason instanceof Error ? failure.reason : new Error(String(failure.reason));
       }

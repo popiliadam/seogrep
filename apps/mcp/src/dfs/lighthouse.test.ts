@@ -676,13 +676,15 @@ describe("createLiveSpeedClient (budget accounting)", () => {
   });
 
   /**
-   * EXACTLY ONE SETTLEMENT ON EITHER PATH. Settling the failure in a `finally` would reach the
-   * healthy lookup too, after its real-cost settlement; `settleSpend` swallows the resulting
-   * "already settled" rejection, so the row would live on carrying the estimate instead of the
-   * real cost and nothing would go red. The memory ledger rejects a double settle, which is what
-   * makes this assertion mean it.
+   * EXACTLY ONE SETTLEMENT ON EITHER PATH — and the ROW cannot prove that, which is finding F-4.
+   * A `finally` wrapping the whole fan-out reaches the healthy lookup too, but it runs AFTER the
+   * real-cost settlement: the memory ledger rejects the second settle, `settleSpend` swallows that
+   * rejection, and the row is left sitting at the REAL cost. Every row assertion below stays green
+   * while every healthy call emits a false "WAKE THE HUMAN" line. So the COUNT is asserted
+   * directly — that is the assertion the outer-`finally` shape actually fails.
    */
-  it("settles a healthy lookup at its REAL cost, not at the failure estimate", async () => {
+  it("settles a healthy lookup ONCE, at its REAL cost, not at the failure estimate", async () => {
+    const settle = vi.spyOn(ledger, "settle");
     const port = createLiveSpeedClient({
       login: "u",
       password: "p",
@@ -694,6 +696,8 @@ describe("createLiveSpeedClient (budget accounting)", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.actualUsd).not.toBeCloseTo(estimateLighthouseUsd(1), 10);
     expect(rows[0]?.rowCount).toBe(1);
+    // A swallowed second settle leaves no trace in the row — only here, and in the log.
+    expect(settle).toHaveBeenCalledTimes(1);
   });
 
   /** Every request body this port sent, parsed, for the two specs below. */
