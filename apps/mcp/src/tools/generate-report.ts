@@ -66,12 +66,23 @@ export interface GenerateReportDeps {
  * columns common to ALL tenant tables, which excludes project_id. Tenant scope is the explicit
  * user_id filter (constitution NEVER #4).
  *
+ * THAT FILTER IS DEFENCE IN DEPTH HERE, NOT THE ONLY GATE, and saying so is the honest reading:
+ * the handler has already resolved the project through the tenant-scoped loadOwnProject before
+ * this runs, so `projectId` is known to be the caller's. Defence in depth is an argument for why
+ * the read is safe TODAY — it is never an argument for deleting the filter, because NEVER #4 is a
+ * rule about every query on an RLS-bypassing client and the gate above it can be moved, made
+ * conditional, or forgotten by a later edit. EXPORTED so service-client-pins.test.ts can drive
+ * this production query head-on: it is injected as a port, so no tool-level spec ever runs it.
+ *
  * CONNECTED IS `account_id !== null`, NOT the existence of the row (migration 0021, same rule
  * as whats_next and /app/connection). The row survives unmapProject and survives an account
  * disconnect with `account_id` nulled by `on delete set null`, so row existence made a PAID
  * report state "Search Console is connected" over a project with no credential behind it.
  */
-async function defaultIsGscConnected(userId: string, projectId: string): Promise<boolean> {
+export async function defaultIsGscConnected(
+  userId: string,
+  projectId: string,
+): Promise<boolean> {
   const { data, error } = await getServiceClient()
     .from("gsc_connections")
     .select("account_id")

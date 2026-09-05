@@ -64,6 +64,7 @@ import { findPriorAuditRun } from "../audit/runs.ts";
 import { CRAWL_PAGE_READ_CAP, loadCrawlSide } from "./my-pages-crawl.ts";
 import { archiveOwnProject, untrackProjectTool } from "./untrack-project.ts";
 import { loadOwnProject } from "./project-target.ts";
+import { defaultIsGscConnected } from "./generate-report.ts";
 import { defaultLoadAccountToken, defaultLoadConnection } from "./pull-gsc-data.ts";
 import { loadGscTokenStatus } from "../gsc-data/load.ts";
 import {
@@ -989,5 +990,47 @@ describe("the by-id tenant read carries user_id AND id (H-3)", () => {
     expect(projects.length, "the tool opened no projects read at all").toBeGreaterThan(0);
     expect(projects[0]?.calls).toContainEqual(tenantFilter);
     expect(projects[0]?.calls).toContainEqual({ method: "eq", args: ["id", PROJECT] });
+  });
+});
+
+/**
+ * GR-2 — generate_report's `gsc_connections` read, the query that decides whether a PAID,
+ * customer-facing report says "Search Console is connected".
+ *
+ * Measured 2026-09-04 (M1): deleting `.eq("user_id", userId)` left 4198/4198 green and
+ * `tsc --noEmit` clean. Only `generate-report.db.test.ts` was looking, and `make verify` does not
+ * run that lane. The tool INJECTS this reader as `deps.isGscConnected`, so every fast-lane spec
+ * drives a fake and the production query never runs — this file's whole premise.
+ *
+ * IT IS DEFENCE IN DEPTH, AND IT IS PINNED ANYWAY. The handler resolves the project through the
+ * tenant-scoped `loadOwnProject` first (block above), so by the time this read happens the id is
+ * known to be the caller's. That is why the finding is P1 and not P0 — and it is not a reason to
+ * leave the filter unpinned: NEVER #4 is a rule about every query on an RLS-bypassing client, and
+ * an ordering that makes a filter redundant today is one edit away from not doing so.
+ *
+ * THE WHOLE KEY, not the tenant column alone: without `project_id` the read is "any connection of
+ * this tenant", which on a two-project account states the wrong project's connection.
+ */
+describe("the generate_report connection read carries user_id AND project_id (GR-2)", () => {
+  const PROJECT = "3b9a1c2d-4e5f-4061-8273-8495a6b7c8d9";
+
+  it("filters on both columns", async () => {
+    db = createFakeQueryDb(() => ({ data: { account_id: "acct-1" } }));
+    await defaultIsGscConnected(USER, PROJECT);
+    const connections = db.onlyStatementFor("gsc_connections");
+    expect(connections.calls).toContainEqual(tenantFilter);
+    expect(connections.calls).toContainEqual({ method: "eq", args: ["project_id", PROJECT] });
+  });
+
+  /**
+   * The ONE row-reading claim this block makes, and it is legal for the reason the file header
+   * gives: it is about how the CALLER INTERPRETS an answer it was handed, not about the query.
+   * `account_id: null` is a real state — the row survives an account disconnect via
+   * `on delete set null` — and reading row existence as "connected" is what made a paid report
+   * announce a connection with no credential behind it (migration 0021).
+   */
+  it("reads a null account_id as NOT connected, not as a connection", async () => {
+    db = createFakeQueryDb(() => ({ data: { account_id: null } }));
+    await expect(defaultIsGscConnected(USER, PROJECT)).resolves.toBe(false);
   });
 });
