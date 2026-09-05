@@ -247,7 +247,7 @@ export const languageCodeField = z
   .optional()
   .describe(
     'OPTIONAL DataForSEO `language_code`, e.g. "en". Omitted by default, in which case the ' +
-      `lookup runs in DataForSEO's own published default — "${LLM_MENTIONS_DEFAULT_LANGUAGE_CODE}" ` +
+      `lookup runs in DataForSEO's own published default — "${LLM_MENTIONS_DEFAULT_LANGUAGE_CODE}"` +
       ", English — and the answer says so rather than leaving you to guess. On platform " +
       '"chat_gpt" that default is the ONLY language the vendor has data for, and any other value ' +
       "is refused before anything is charged.",
