@@ -422,22 +422,29 @@ describe("NEVER #7 — one platform, one locale, one moment, and no verdict of o
   });
 
   /**
-   * WHAT WAS NOT CHECKED, said out loud. A `google` locale is passed straight to the vendor:
-   * SeoGrep does not hold the vendor's free `locations_and_languages` list, so it is not claiming
-   * the value is valid. A locale the vendor has no data for comes back THIN rather than as an
+   * WHAT WAS NOT CHECKED, said out loud — and since H-10, what WAS. A `google` location NAME is
+   * now compared against `dfs/locations.ts` before the money moves, so the old blanket "it did not
+   * check them" became false the moment that gate landed. What stays true is the part that matters
+   * to a reader of a thin answer: that table is a handful of measured SPELLINGS from the SERP
+   * locations endpoint, not this family's own `locations_and_languages` list, and the language code
+   * is not checked at all. A locale the vendor has no data for comes back THIN rather than as an
    * error — the shape that reads as "nobody mentions you".
    */
-  it("says a google locale was not validated, and says nothing of the sort on chat_gpt", () => {
+  it("says what a google locale was and was not checked against, and says nothing of the sort on chat_gpt", () => {
     const scope: MeasurementScope = {
       ...FULL_SCOPE,
       platform_requested: "google",
       platform_means: PLATFORM_MEANS.google,
-      location_name: "Turkey",
+      location_name: "Turkiye",
       language_code: "tr",
     };
     const text = formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], scope));
     expect(text).toContain(UNVALIDATED_LOCALE_NOTE);
     expect(text).toMatch(/locations_and_languages/);
+    // The note must not claim a check this product does not run...
+    expect(UNVALIDATED_LOCALE_NOTE).toMatch(/language code is not checked/i);
+    // ...nor deny the one it does.
+    expect(UNVALIDATED_LOCALE_NOTE).toMatch(/spelling/i);
     // chat_gpt's locale IS checked — claiming otherwise there would be false modesty.
     expect(formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], FULL_SCOPE))).not.toContain(
       UNVALIDATED_LOCALE_NOTE,
@@ -750,20 +757,60 @@ describe("ai_visibility free pre-reserve gates (no credit machinery)", () => {
   });
 
   /**
+   * H-10 — THE GOOGLE HALF OF THE SAME MATRIX, measured live on 2026-09-05 (deploy d367875):
+   * `{platform: "google", location_name: "Turkey", language_code: "tr"}` opened the reservation,
+   * went out to DataForSEO and came back `40501 Invalid Field: 'location_name'`. The credits were
+   * released, but the $0.30 of free-vendor allowance the attempt burned was not — the same daily
+   * budget H-1's two attempts exhausted.
+   *
+   * NOTHING NEW HAD TO BE MEASURED TO PREVENT IT. `dfs/locations.ts` has held "Turkey" -> "Turkiye"
+   * since slice 3, where `serp_snapshot` paid 13 credits for the identical vendor sentence; the
+   * previous slice added a NOTE about google's locale and did not consult the table it already had.
+   *
+   * THE REFUSAL IS FREE AND IT NAMES THE REPLACEMENT: a caller told only "invalid" is back to the
+   * guessing game that spent the money in the first place.
+   */
+  it("refuses google with a known-wrong location spelling, for free, and names the vendor's own", async () => {
+    const fetchAiVisibility = vi.fn(mockPort().fetchAiVisibility);
+    const tool = makeAiVisibilityTool({
+      port: { ...mockPort(), fetchAiVisibility },
+      loadProject,
+    });
+    const refused = await tool.run(CTX, {
+      subject: "domain",
+      project_id: PROJECT_ID,
+      platform: "google",
+      location_name: "Turkey",
+      language_code: "tr",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/location_name/);
+    expect(refused.content[0]?.text).toMatch(/Turkiye/);
+    expect(refused.content[0]?.text).toMatch(/not charged/i);
+    // Free by construction: the vendor was never asked, so no allowance was spent either.
+    expect(fetchAiVisibility).not.toHaveBeenCalled();
+  });
+
+  /**
    * THE GATE IS NOT A BLANKET REFUSAL OF LOCALES, and these are the counter-values the round that
    * found H-1 never ran (signed lesson 13: a prescribed diagnosis is a hypothesis until something
-   * measures the other direction). `chat_gpt` in its OWN locale passes; `google` in another
-   * country's passes, because DataForSEO publishes 92 locations for it.
+   * measures the other direction). `chat_gpt` in its OWN locale passes; `google` passes in the
+   * vendor's own spelling of another country, and in a country the table has never heard of —
+   * `dfs/locations.ts` refuses only what it has MEASURED to be wrong, so the other ~90 locations
+   * DataForSEO publishes for `google` are not blocked by a list this repo does not hold.
    *
    * REACHING THE CREDIT GUARD IS THE ASSERTION: these specs run with no Supabase env, so a call
    * that gets past every free gate throws on it. A refusal would have returned an isError result
    * instead, which is what makes this the negative control for the two specs above.
    */
-  it("lets chat_gpt through in its own locale, and google through in any locale", async () => {
+  it("lets chat_gpt through in its own locale, and google through in every locale but a measured-wrong spelling", async () => {
     for (const locale of [
       { platform: "chat_gpt", location_name: "United States", language_code: "en" },
       { platform: "chat_gpt", location_name: "united states" },
-      { platform: "google", location_name: "Turkey", language_code: "tr" },
+      { platform: "google", location_name: "Turkiye", language_code: "tr" },
+      { platform: "google", location_name: "France", language_code: "fr" },
+      { platform: "google", language_code: "tr" },
+      { platform: "google" },
     ]) {
       await expect(
         serving().run(CTX, { subject: "domain", project_id: PROJECT_ID, ...locale }),

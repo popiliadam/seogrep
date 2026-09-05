@@ -3063,9 +3063,14 @@ export const DOC_PROSE = {
           "`chat_gpt` lookup naming any other `location_name` or `language_code` is refused " +
           "**before any credits are reserved and before anything goes out to the vendor** — " +
           "the vendor rejects it anyway, and without this check that rejection costs a paid " +
-          "attempt to discover. `google` carries no such restriction: DataForSEO publishes " +
-          "many locations for it, and SeoGrep passes yours straight through rather than " +
-          "checking it against a list it does not hold.",
+          "attempt to discover. `google` is not restricted to one locale — DataForSEO " +
+          "publishes many locations for it — but the vendor matches a location NAME exactly, " +
+          "and rejects an unknown spelling only after the paid request has gone out. So spell " +
+          "it as DataForSEO does (**`Turkiye`**, not `Turkey`): a spelling SeoGrep has measured " +
+          "the vendor rejecting is refused before anything is charged, and the refusal names " +
+          "the vendor's own. That is a spelling check against SeoGrep's short table of " +
+          "measured names, not a check against this family's own list of supported locations " +
+          "— SeoGrep does not hold that list, and every answer says so.",
       },
     ],
   },
@@ -3186,9 +3191,14 @@ export const DOC_PROSE = {
           "`chat_gpt` lookup naming any other `location_name` or `language_code` is refused " +
           "**before any credits are reserved and before anything goes out to the vendor** — " +
           "the vendor rejects it anyway, and without this check that rejection costs a paid " +
-          "attempt to discover. `google` carries no such restriction: DataForSEO publishes " +
-          "many locations for it, and SeoGrep passes yours straight through rather than " +
-          "checking it against a list it does not hold.",
+          "attempt to discover. `google` is not restricted to one locale — DataForSEO " +
+          "publishes many locations for it — but the vendor matches a location NAME exactly, " +
+          "and rejects an unknown spelling only after the paid request has gone out. So spell " +
+          "it as DataForSEO does (**`Turkiye`**, not `Turkey`): a spelling SeoGrep has measured " +
+          "the vendor rejecting is refused before anything is charged, and the refusal names " +
+          "the vendor's own. That is a spelling check against SeoGrep's short table of " +
+          "measured names, not a check against this family's own list of supported locations " +
+          "— SeoGrep does not hold that list, and every answer says so.",
       },
     ],
   },
