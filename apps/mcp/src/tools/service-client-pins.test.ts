@@ -30,7 +30,8 @@ import {
  *
  * Findings closed here: LCA B-4 · LJ B-2 · LP B-1 · UP-1 · TK F-1 · TGP-1 · CG-1 (mapping read)
  * · B-1/CS-1 (the crawl_site in-flight read) · the two audit crawl reads added by the 2026-09
- * audit slice (last block).
+ * audit slice · H-3 (`forUser().selectOwnById`, the by-id read every project-scoped tool owns
+ * its tenant gate through) and GR-2 (generate_report's gsc_connections read), Dilim 6.
  */
 
 const USER = "user-under-test";
@@ -61,7 +62,8 @@ import {
 } from "./tracked-keywords-store.ts";
 import { findPriorAuditRun } from "../audit/runs.ts";
 import { CRAWL_PAGE_READ_CAP, loadCrawlSide } from "./my-pages-crawl.ts";
-import { archiveOwnProject } from "./untrack-project.ts";
+import { archiveOwnProject, untrackProjectTool } from "./untrack-project.ts";
+import { loadOwnProject } from "./project-target.ts";
 import { defaultLoadAccountToken, defaultLoadConnection } from "./pull-gsc-data.ts";
 import { loadGscTokenStatus } from "../gsc-data/load.ts";
 import {
@@ -930,5 +932,62 @@ describe("the my_pages crawl-side reads carry their whole key (A-1)", () => {
     await loadCrawlSide(USER, PROJECT);
     const pages = db.onlyStatementFor("crawl_pages");
     expect(callsTo(pages, "limit").map((call) => call.args)).toEqual([[CRAWL_PAGE_READ_CAP]]);
+  });
+});
+
+/**
+ * H-3 — `forUser(...).selectOwnById`, THE BY-ID READ MOST PROJECT-SCOPED TOOLS OWN THEIR TENANT
+ * GATE THROUGH, and the one `selectOwn` sibling nothing was looking at.
+ *
+ * Measured 2026-09-04 by the Dilim 6 referee (HM9): deleting `.eq("user_id", userId)` from
+ * `db.ts`'s `selectOwnById` left the whole fast lane green at 4198/4198, AND left the db lane
+ * without a red line of its own — `auth.db.test.ts` exercised only `selectOwn`, and this file
+ * held `forUser` for `list_projects`, which is also a `selectOwn` caller. So the FOURTH member of
+ * the D4-1 class was the wrapper the class's own guard lives in.
+ *
+ * WHAT THAT FILTER IS. `loadOwnProject` is the single by-id project read behind the ownership
+ * gate of every tool that takes a `project_id` — generate_report, crawl_site, pull_gsc_data, the
+ * audits, the discovery tools, untrack_project, the fourteen resolveTarget tools. The client is
+ * service-role and bypasses RLS, so that one call is the whole of NEVER #4 for all of them:
+ * without it "your project" becomes "anyone's project with this id", and the sentence a missing
+ * project and another tenant's project share stops being true of the second one.
+ *
+ * BOTH HALVES OF THE KEY, not the tenant column alone (this file's rule): the `id` filter is what
+ * makes it a by-id read at all, and `maybeSingle` is what makes "no such row" answer null instead
+ * of throwing. And the rows are never the evidence — the fake applies none of these filters.
+ */
+describe("the by-id tenant read carries user_id AND id (H-3)", () => {
+  const PROJECT = "7c1d2e3f-4a5b-4c6d-8e7f-90a1b2c3d4e5";
+
+  /** One project row, so the read resolves and a caller can go on to use it. */
+  function withOneProject(): void {
+    db = createFakeQueryDb(() => ({
+      data: { id: PROJECT, domain: "example.com", archived_at: null },
+    }));
+  }
+
+  it("loadOwnProject filters on user_id and on the id it was asked for", async () => {
+    withOneProject();
+    await loadOwnProject(USER, PROJECT);
+    const projects = db.onlyStatementFor("projects");
+    expect(projects.calls).toContainEqual(tenantFilter);
+    expect(projects.calls).toContainEqual({ method: "eq", args: ["id", PROJECT] });
+    expect(callsTo(projects, "maybeSingle")).toHaveLength(1);
+  });
+
+  /**
+   * THE SAME READ REACHED THE WAY A CUSTOMER REACHES IT, through a real tool rather than through
+   * the loader alone (signed lesson 14, the position axis). `untrack_project` is driven because
+   * it is 0-credit — withCredits short-circuits before it opens a DB client, so this stays a
+   * DB-less spec — and because it takes the loader as a PORT whose default is the production
+   * one, which is exactly the shape that let the fast lane miss the filter in the first place.
+   */
+  it("a project-scoped tool's ownership gate carries the filter too", async () => {
+    withOneProject();
+    await untrackProjectTool.run(CTX, { project_id: PROJECT });
+    const projects = db.statementsFor("projects");
+    expect(projects.length, "the tool opened no projects read at all").toBeGreaterThan(0);
+    expect(projects[0]?.calls).toContainEqual(tenantFilter);
+    expect(projects[0]?.calls).toContainEqual({ method: "eq", args: ["id", PROJECT] });
   });
 });
