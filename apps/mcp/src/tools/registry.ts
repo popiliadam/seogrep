@@ -528,7 +528,9 @@ function tightenNode(schema: z.ZodType): z.ZodType {
     }
     const withFields =
       Object.keys(tightenedFields).length === 0 ? schema : schema.safeExtend(tightenedFields);
-    return withFields.strict() as unknown as z.ZodType;
+    // Both safeExtend() and strict() return a NEW instance, so the object's own `.describe()` is
+    // dropped here for the same reason clone() drops the array's — see carryMeta.
+    return carryMeta(schema, withFields.strict()) as unknown as z.ZodType;
   }
   if (schema instanceof z.ZodArray) {
     const element = schema.element as z.ZodType;
@@ -548,6 +550,11 @@ function tightenNode(schema: z.ZodType): z.ZodType {
  * (the one that says THE PRICE IS PER COMPARED TARGET) vanished from tools/list and from its docs
  * page, and the tool-docs check in verify.sh is what said so. A tightener that silently deletes
  * the sentence naming a tool's price would have been a worse defect than the hole it closed.
+ *
+ * IT APPLIES TO OBJECTS TOO (F-5), and not only to the cloned array: `.safeExtend()` and
+ * `.strict()` each return a new instance, so an OBJECT's own description was dropped by the same
+ * mechanism. No inner object carries one today, so nothing was red — which is exactly why it was
+ * worth closing before the first one is added and loses its sentence with no gate but docs-drift.
  */
 function carryMeta<T extends z.ZodType>(from: z.ZodType, to: T): T {
   const meta = z.globalRegistry.get(from);

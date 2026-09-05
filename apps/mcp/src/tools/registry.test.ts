@@ -815,6 +815,27 @@ describe("S1 — unknown input keys are refused, not silently dropped", () => {
     expect(nested.properties.many.minItems).toBe(2);
   });
 
+  /**
+   * F-5. `.describe()` in zod 4 lives in `z.globalRegistry` keyed by the schema INSTANCE, and BOTH
+   * `.safeExtend()` and `.strict()` return a new instance — so the object branch of the walk drops
+   * an inner object's description exactly as `clone()` dropped the array's. No inner object carries
+   * one TODAY, which is why nothing is red and why this is a trap rather than a bug: the first one
+   * added would lose its sentence silently, and the only gate that would notice is the docs-drift
+   * check. Asserted on the ADVERTISED schema, which is where a caller would miss it.
+   */
+  it("carries a nested object's OWN description through the tightening", () => {
+    const advertised = toInputJsonSchema(
+      z.object({
+        one: z.object({ a: z.string() }).describe("the inner object's own sentence"),
+        many: z.array(z.object({ b: z.string() }).describe("an element's own sentence")),
+      }),
+    ) as { properties: { one: Record<string, unknown>; many: Record<string, unknown> } };
+    expect(advertised.properties.one.description).toBe("the inner object's own sentence");
+    expect((advertised.properties.many.items as Record<string, unknown>).description).toBe(
+      "an element's own sentence",
+    );
+  });
+
   it("keeps a nested object's OWN refinement while making it strict", () => {
     const target = z
       .object({ a: z.string().optional(), b: z.string().optional() })
