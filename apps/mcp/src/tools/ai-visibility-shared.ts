@@ -307,8 +307,12 @@ export const locationNameField = z
       `this endpoint too, defaulting to ${LLM_MENTIONS_DEFAULT_LOCATION_CODE}; SeoGrep sends the ` +
       "name). Omitted by default, in which case the lookup runs in DataForSEO's own published " +
       "default — the United States — and the answer says so rather than leaving you to guess. " +
-      'On platform "chat_gpt" that default is the ONLY location the vendor has data for, and any ' +
-      "other value is refused before anything is charged.",
+      'Spell it as DataForSEO names it (e.g. "Turkiye", not "Turkey"): the vendor matches this ' +
+      "name exactly and rejects an unknown one AFTER the paid request has gone out, so on " +
+      'platform "google" a spelling SeoGrep has measured to be wrong is refused before anything ' +
+      'is charged, naming the vendor\'s own. On platform "chat_gpt" the default above is the ONLY ' +
+      "location the vendor has data for, and any other value is refused before anything is " +
+      "charged.",
   );
 
 export const languageCodeField = z
