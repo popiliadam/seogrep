@@ -10,8 +10,8 @@
 |---|---|---|
 | 1 Statik | ÖLÇÜLDÜ | handler + zod + description + `costs.ts:135` + mdx + DFS adaptörü okundu; kredi/metin tutarsızlığı YOK |
 | 2 Mutasyon | ÖLÇÜLDÜ | 5 mutasyon: M1/M2/M3 KIRMIZI, M7 **YEŞİL KALDI**; `git diff --stat` boş |
-| 3 Canlı negatif | ÖLÇÜLDÜ | 9 negatif, **hepsi ücretsiz** (defterde satır yok); kiracı izolasyonu ayırt edilemez cümle ile |
-| 4 Canlı mutlu yol | **ÖLÇÜLEMEDİ** | 2 ücretli deneme **vendor 40501 ile düştü** (`location_name`, sonra `language_code`); 3. deneme hesabın $0,50 ücretsiz-vendor ödeneği tükendiği için reddedildi |
+| 3 Canlı negatif | ÖLÇÜLDÜ | ~~9 negatif~~ **7 negatif** *(hakem turu, 2026-09-04: §3 tablosu yedi satır taşıyor — N1·N2·N3·N11·N13·N14·N15)*, **hepsi ücretsiz** (defterde satır yok); kiracı izolasyonu ayırt edilemez cümle ile |
+| 4 Canlı mutlu yol | **ÖLÇÜLEMEDİ** | 2 ücretli deneme **vendor 40501 ile düştü** (`location_name`, sonra `language_code`); 3. deneme hesabın $0,50 ücretsiz-vendor ödeneği tükendiği için reddedildi *(hakem turu: bu iki çağrı iş emrinin ≤1 ücretli çağrı tavanını AŞTI — H-6, §4)* |
 | 5 SEO güncelliği | ÖLÇÜLDÜ | R-5.2 **TEMİZ** (llms.txt kaynakta hiç yok); R-5.5 ve R-5.9/R-3.22–3.24 **AYKIRI**; R-8.4/8.5 **İLGİSİZ** (şerh önerisi) |
 | 6 Kart | ÖLÇÜLDÜ | `card-map.ts:41` → `"report"`; `CARDED_TOOLS` yalnız `get_credit_balance` (ertelenmiş) |
 | 7 Kanıt üçlüsü | ÖLÇÜLDÜ | `plan.mjs:192` EXCLUDED gerekçesi **BAYAT DEĞİL** — H-01 hâlâ açık; `goals/` hedefi EVET |
@@ -20,13 +20,22 @@
 alan (`location_name`, `language_code`) DataForSEO tarafından reddediliyor; 2026-08-25 outage'ının aynı
 sınıfı iki alan daha üzerinde yaşıyor ve mutlu yol bu yüzden ölçülemedi.
 
+**Karar (hakem turu, 2026-09-04 — taze Fable, SERT): FAIL (dar) — kayıt DÜZELTİLEREK kapanır.**
+Ölçülen olgular (iki 40501 reddi, kredi iadesi, ödenek tükenmesi) doğru; **teşhis ölçülmeden yazılmış.**
+Vendor REST dokümanı bu ucun lokal alanlarını YAYIMLIYOR ve `chat_gpt`'yi US/en ile sınırlıyor; denenen
+tek kombinasyon `chat_gpt` + ABD-dışıdır. *"Alan yoksa şemadan kaldırılmalı"* bir HİPOTEZDİR (ders 13).
+Düzeltilenler: **AV-1 gövdesi yeniden yazıldı (= H-1)** · **AV-2 GERİ ÇEKİLDİ** · **AV-8 daraltıldı (H-4)** ·
+**AV-7 AYKIRI → İLGİSİZ** · yeni **H-2** (D4 sınıf 4 altıncı üye) · **H-6** protokol sapması ·
+**H-9** DK-3'ün lighthouse kardeşi · **H-01 satırı KISMEN → HAYIR** · sayı/satır düzeltmeleri.
+
 **Karar (kapanış, YYYY-MM-DD):**
 
 ---
 
 ## 1. Statik okuma
 
-- Handler: `apps/mcp/src/tools/ai-visibility.ts:299` (`makeAiVisibilityTool` → `defineTool`, `charge: "handler"`)
+- Handler: ~~`apps/mcp/src/tools/ai-visibility.ts:299`~~ **`apps/mcp/src/tools/ai-visibility.ts:303`**
+  *(hakem turu, 2026-09-04: satır numarası düzeltildi)* (`makeAiVisibilityTool` → `defineTool`, `charge: "handler"`)
 - Port: `apps/mcp/src/dfs/llm-mentions.ts` (`createLiveAiVisibilityClient:1085`, `fetchAiVisibility:1150`)
 - Paylaşılan yüzey: `apps/mcp/src/tools/ai-visibility-shared.ts`
 - Uç: `aggregated_metrics/live` (`llm-mentions.ts:141`)
@@ -61,6 +70,12 @@ yüzden `refuseUnknownKeys` (`registry.ts:489`, `instanceof z.ZodObject`) bu şe
 
 **"THAT location and language"** cümlesi ölçümle çürüdü — bkz. AV-1.
 
+> **(hakem turu, 2026-09-04)** Bu cümle *çürümedi*; **eksik**. Ölçülen şey `chat_gpt` + ABD-dışı
+> kombinasyonunun reddidir, cümlenin yanlışlığı değil. Vendor dokümanı `chat_gpt`'yi **yalnız US/en**
+> ile sınırlıyor, `google`'ı 92 lokasyonla yayımlıyor — yani "THAT location and language" `google` için
+> DOĞRU, `chat_gpt` için **hiçbir zaman kullanıcının seçtiği** lokal değil. Description bu ayrımı
+> söylemediği için yeniden yazılmalı → **H-1** (AV-1'in yeni gövdesi).
+
 ### Kredi satırı (`apps/mcp/src/credits/costs.ts:135`, birebir)
 
 ```
@@ -80,6 +95,15 @@ Kredi cümlesi birebir: `**Cost:** 90 credits.` Input tablosu `location_name` i�
 > other SeoGrep tools take (this vendor family publishes no code).
 
 Bu satırdaki **"United States"** örneği, canlıda 40501 aldığım değer sınıfının ta kendisi (AV-1/AV-2).
+
+> **(hakem turu, 2026-09-04) — yeni bulgu H-2.** Bu alıntının parantezi **"this vendor family publishes
+> no code"** diyor ve bu **YANLIŞ**: vendor dokümanı `location_code`'u (varsayılan **2840**) ve
+> `language_code`'u (varsayılan **`en`**) açıkça yayımlıyor. Aynı yanlış varsayımın ikinci yüzü
+> `ai-visibility-shared.ts:244` çıktı cümlesidir — *"DataForSEO applied its own default and SeoGrep does
+> not know which"* — **varsayılan biliniyor** (2840 / `en`). İkisi birlikte **Dilim 4 sınıf 4'ün
+> (ABD/İngilizce varsayılanının sessizce uygulanması) ALTINCI üyesidir**; `format/locale-default.ts`
+> (`defaultLocaleWarning`) bu aileye hiç bağlanmamış. `locationNameField` (`ai-visibility-shared.ts:97`)
+> ve mdx üretici aynı cümleyi taşıyor → **H-2, P2** (bulgular tablosu).
 
 ### Bütçe aritmetiği (elle hesaplandı, ÇAĞRIDAN ÖNCE)
 
@@ -122,6 +146,12 @@ Karışabileceği komşu: `serp_snapshot` (AI Overview VARLIĞINI ölçer, LLM c
 **Testler `status`'ü değil, `actualUsd`'yi (ve `todaySpendUsd`'yi) pinliyor.** Yani "open kaldı mı" sorusu
 `actual_usd === null` üzerinden ölçülüyor — bellek-içi ledger'da bu doğru vekildir.
 
+> **(hakem turu, 2026-09-04) — üç-yol tablosu KAYNAKLA BİREBİR DOĞRULANDI.** Hakem üç satırı da kaynakta
+> okudu: `:1122-1126` settle **yok** · `:1130-1134` yalnız `vendorPriced !== null` iken
+> `settleSpend(…, 0)` · `vendorPriced === null` dalı **açık**. Adlandırılan test başlıkları da
+> doğrulandı, ve HM6 (`:1132` → `&& false`) **KIRMIZI ×2** verdi — yani 2. yolun pini gerçek.
+> Aynı turda ölçülen ikinci kanıt: `settleFailedSpend` grep'i `llm-mentions.ts`'te **0**.
+
 ### DK-3 sınıfı: **KISMEN**
 
 `llm-mentions.ts` `settleFailedSpend`'i **import ETMİYOR**. Ölçüm:
@@ -134,6 +164,15 @@ grep -n "settleFailedSpend" apps/mcp/src/dfs/*.ts
 ```
 
 Dilim 4/5'te 11 port `settleFailedSpend` ile kapandı; bu aile o dalganın DIŞINDA kaldı.
+
+> **(hakem turu, 2026-09-04) — yeni bulgu H-9: bu kayıt `lighthouse`'u anmıyor.** DK-3 sınıfının kardeşi
+> yalnız `llm-mentions` değil: `dfs/lighthouse.ts:563` rezervasyonu **"Reservation deliberately left
+> OPEN"** diye bırakıyor ve `dfs/lighthouse.test.ts:652` bunu **kasten pinliyor** (`actualUsd`
+> `toBeNull`). Ne bu kayıt ne `ai_visibility_compare.md` lighthouse'u anıyor. **Ailenin bugünkü DK-3
+> resmi ÜÇ ŞEKİLDİR ve üçü aynı dizinde yaşıyor:** (1) **açık bırak** — `lighthouse`, `llm-mentions`
+> transport yolu; (2) **tahminle kapat** — Dilim 4/5'in 11 portu (`settleFailedSpend`); (3) **vendor
+> fiyatıyla kapat** — `llm-mentions` non-20000 yolu, ki `budget.ts:194-201` bunu ADIYLA yasaklıyor.
+> Doktrin kararı (AV-3) bu üç şeklin hepsini birden bağlamalıdır, yalnız bu ailenin ikisini değil.
 
 ### Doktrin çatışması — P1
 
@@ -176,6 +215,13 @@ satır için vendor'dan bir üst sınır alınmadıkça 5,58× marj bir BAZ'dır
 **H-01 satırı: KISMEN.** Üç yoldan yalnız biri (vendor fiyatlandırdıysa) kapanıyor; ikisi açık kalıyor;
 ve kapanan tek yol bunu `budget.ts`'nin açıkça yasakladığı sayıyla ($0,00 olabilir) yapıyor.
 
+> **(hakem turu, 2026-09-04) — "üç yolda da kapanıyor mu" sorusunun cevabı: HAYIR.** Hakem soruyu tek
+> tek ölçtü: **transport → AÇIK** (`llm-mentions.test.ts:1079` bunu TASARIM OLARAK pinliyor, yani
+> onarım o pini taşımadan giremez) · **non-20000 → vendor fiyatıyla KAPANIR, ve o fiyat $0 olabilir**
+> (`:1051`, `:1065`; HM6 mutasyonu iki testi kırmızıya düşürdü) · **okunamayan gövde → AÇIK, adlı test
+> YOK** (2. ve 3. yol tek `catch`'i paylaşıyor). "KISMEN" nitelemesi doğru ama zayıf: `status` ekseninde
+> üç yoldan **ikisi** açık ve **biri** yasaklı doktrinle kapanıyor.
+
 ---
 
 ## 2. Mutasyon (test gerçekten bakıyor mu)
@@ -208,7 +254,9 @@ per-IP flood throttle` de kırmızıydı; temiz koşuda yeşil → **flake**, mu
 ## 3. Canlı negatif yol
 
 Uç: canlı MCP (`MCP_SMOKE_URL`, anahtar redakte). Script: `<scratchpad>/dilim6/canli/probe-ai.mjs`.
-**Dokuz negatifin dokuzu da ücretsiz** — `list_credit_activity` filtresiz okundu, hiçbirinde satır yok.
+~~**Dokuz negatifin dokuzu da ücretsiz**~~ **YEDİ negatifin yedisi de ücretsiz** *(hakem turu,
+2026-09-04: aşağıdaki tablo yedi satır taşıyor; "dokuz" sayımı kayıtta karşılıksız)* —
+`list_credit_activity` filtresiz okundu, hiçbirinde satır yok.
 
 | senaryo | argüman | HTTP / envelope | kredi Δ | gözlem |
 |---|---|---|---|---|
@@ -241,6 +289,15 @@ $0,50 → `free-vendor-calls.ts:70` (`FREE_VENDOR_SPEND_DAILY_USD`) doğru davra
 Muhafız kusurlu değil; muhafızı tetikleyen şey tool'un KENDİ ilan ettiği alanların vendor tarafından
 reddedilmesi. Mutlu yol **00:00 UTC sonrasına** kalıyor.
 
+> **(hakem turu, 2026-09-04) — H-6, protokol sapması (bulgu değil, tur kaydı).** İş emri bu tool için
+> **≤1 ücretli çağrı** tavanı koymuştu; vendor'a **2 çağrı** gitti (P1 ve P1b). Kredi ekseninde tavan
+> aşılmadı — net Δ **0**, ikisi de iade edildi — ama **bütçe ekseninde aşıldı:** 2 × $0,30 = **$0,60**
+> ödenek yakıldı ve hesabın $0,50'lik günlük ücretsiz-vendor payı bitti. Sapmanın bedeli tam olarak
+> §4'ün başlığıdır: **mutlu yol bu turda ölçülemez oldu.** Ders: bir alan reddedildiğinde ikinci
+> denemenin *hangi ekseni varyantladığı* önce yazılır (ders 14) — burada ikinci deneme aynı ekseni
+> (lokal alan × `chat_gpt`) tekrarladı, karşı-değeri (`google` + Turkey, ya da `chat_gpt` + US/en)
+> denemedi; H-1'in ölçülmeden yazılmasının mekaniği budur.
+
 Defter (filtresiz, çağrılardan sonra):
 
 ```
@@ -272,10 +329,10 @@ En yüksek risk: llms.txt önerisi (R-5.2); AI Overview item type şemasının k
 | R-5.1 ek gereksinim yok | tool hiçbir "AI için şunu yap" tavsiyesi vermiyor; yalnız vendor alanı basıyor | **UYUYOR** | `AI_VISIBILITY_JUDGEMENT_NOTE` tavsiye değil, sınır beyanı |
 | **R-5.5 query fan-out** | **hiçbir yerde** | **AYKIRI** | `AI_FAN_OUT_NOTE` bu depoda VAR (`tools/serp-features.ts:68`) ve `serp_snapshot` + `keyword_positions` basıyor. `platform:"google"` tam olarak fan-out yüzeyini ölçüyor ama şerh yok. Ölçüm: `grep -rniE "fan.?out" apps/mcp/src` → ai-visibility ailesinde yalnız bir KOD yorumu (`ai-visibility-compare.ts:428`, konusu başka) → AV-6 |
 | R-5.3 / R-5.4 snippet kontrolleri | anılmıyor | **İLGİSİZ** | Bu tool ölçer, öneri vermez; `nosnippet` tavsiyesi `audit_onpage`'in ekseni |
-| R-5.6 Google-Extended | anılmıyor | **AYKIRI (ölçüm boşluğu)** | R-3.20 ile aynı kalem |
+| R-5.6 Google-Extended | anılmıyor | ~~**AYKIRI (ölçüm boşluğu)**~~ → **İLGİSİZ + ŞERH** *(hakem turu)* | R-3.20 ile aynı kalem; ikisi de bir crawler-token yüzeyi VARSAYIYOR, bu tool'da öyle bir yüzey yok |
 | R-5.7 / R-5.8 Bing AI Performance | anılmıyor | **İLGİSİZ (bugün)** | DFS LLM Mentions `platform` enum'ı **tam olarak iki** değer taşıyor (`chat_gpt`, `google`) ve description bunu açıkça söylüyor (*"There is no 'all assistants' option here"*). Bing/Copilot vendor'da yok → uydurulamaz. Kayda geçer: ürün "AI görünürlüğü" derken Copilot'u KAPSAMIYOR ve bunu söylüyor |
-| **R-5.9 OAI-SearchBot tarifi** | anılmıyor | **AYKIRI** | ChatGPT görünürlüğünü ÖLÇEN tool, OpenAI'ın yayımladığı tek eyleme dönük tavsiyeyi (robots.txt'te `OAI-SearchBot`'a izin) hiç anmıyor → AV-7 |
-| **R-3.20 / R-3.22–R-3.24 crawler token'ları** | hiçbir yerde | **AYKIRI (ölçüm boşluğu)** | `grep -rniE "oai-searchbot\|gptbot\|claudebot\|claude-searchbot\|perplexitybot\|google-extended\|chatgpt-user" apps/mcp/src apps/web/content` → **0 eşleşme**. Referansın "token listesi bayatlaması" riski bu ailede de **karşılıksız: liste yok ki bayatlasın** (`audit_tech` T-B8 ile aynı sonuç) |
+| **R-5.9 OAI-SearchBot tarifi** | anılmıyor | ~~**AYKIRI**~~ → **İLGİSİZ + ŞERH** *(hakem turu)* | ChatGPT görünürlüğünü ÖLÇEN tool, OpenAI'ın tavsiyesini (robots.txt'te `OAI-SearchBot`'a izin) anmıyor — ama **bu tool bir ölçüm yüzeyidir, öneri yüzeyi değil** ve hiçbir yerde öneri vermiyor. Referans satırı bir ÖNERİ yüzeyi varsaymış → **D4-10** (referans satırı yapısal olarak karşılıksız). → AV-7 |
+| **R-3.20 / R-3.22–R-3.24 crawler token'ları** | hiçbir yerde | ~~**AYKIRI (ölçüm boşluğu)**~~ → **İLGİSİZ + ŞERH** *(hakem turu)* | `grep -rniE "oai-searchbot\|gptbot\|claudebot\|claude-searchbot\|perplexitybot\|google-extended\|chatgpt-user" apps/mcp/src apps/web/content` → **0 eşleşme**. Referansın "token listesi bayatlaması" riski bu ailede de **karşılıksız: liste yok ki bayatlasın** (`audit_tech` T-B8 ile aynı sonuç) |
 | **R-8.4 / R-8.5 AI Overview item type'ları** | ayrıştırıcıda karşılığı yok | **İLGİSİZ — ŞERH ÖNERİLİYOR** | Ölçüm: `grep -n "item_type\|ai_overview" apps/mcp/src/dfs/llm-mentions.ts` → **0 eşleşme**. Bu tool SERP uçlarını değil `aggregated_metrics`'i çağırıyor; ayrıştırıcı skalerleri **birebir vendor anahtarıyla** taşıyor (`vendor_metrics`) ve iç içe alanları **adlandırarak** düşürüyor. Tanınan tip kümesi olmadığı için bir tip **sessizce düşürülemez** — `serp_snapshot` #221 ile birebir aynı sonuç |
 | **R-8.6 goto URL çözümlemesi** | ayrıştırıcı yok | **İLGİSİZ (ölçüldü)** | `grep -iE "goto\|/url\?q=\|google\.com/url\|redirect" apps/mcp/src/dfs/llm-mentions.ts` → 0 eşleşme |
 | **R-8.7 LLM Mentions genişlemesi (historical + Lite)** | tool "no date range" diyor | **ŞERH** | Uç-kapsamlı olarak DOĞRU (`aggregated_metrics/live` tarih parametresi yayımlamıyor). Ama description'ın *"so there is no period to ask for"* cümlesi AİLE düzeyinde bir mutlak gibi okunuyor; R-8.7 ailenin **historical** uçlarla genişlediğini kaydediyor. Ürün kararı, kod kusuru değil → AV-9 |
@@ -285,6 +342,16 @@ En yüksek risk: llms.txt önerisi (R-5.2); AI Overview item type şemasının k
 oluşuyor ve **ikisi de bugün karşılıksız** — llms.txt hiç yok, item type allowlist'i hiç yok. Satır
 SİLİNMEMELİ (bir gün allowlist gelirse risk aynen açılır) ama "**ölçüldü 2026-09-04: ikisi de karşılıksız;
 gerçekleşen risk lokal alanların vendor tarafından reddi**" şerhi düşülmeli.
+
+> **(hakem turu, 2026-09-04) — H-8, metin yetkisi kullanıldı; referansa İŞLENDİ.**
+> **KABUL:** R-8.4/R-8.5 **İLGİSİZ + şerh** (ayrıştırıcıda tanınan tip kümesi yok → sessiz düşme
+> yapısal olarak imkânsız) · R-5.2 **TEMİZ** (`llms.txt` grep'i depoda 0; referansın "en yüksek risk"i
+> bu üründe karşılıksız).
+> **DÜZELTİLDİ:** R-3.20 · R-3.22–R-3.24 · R-5.6 · R-5.9 **AYKIRI → İLGİSİZ + şerh** — dördü de bir
+> *öneri/robots yüzeyi* varsayıyor, bu tool ölçüm basıyor (D4-10, dördüncü tekrar).
+> **YENİDEN YAZILDI:** satırın "en yüksek risk"i artık **"`chat_gpt` yalnız US/en lokal matrisi +
+> vendor varsayılanının (2840/`en`) söylenmemesi"**tir — llms.txt ya da item type kayması değil.
+> Şerhler `docs/reference/2026-09-02-seo-referans-listesi.md`'ye işlendi; **hiçbir satır silinmedi.**
 
 ---
 
@@ -318,15 +385,30 @@ kartın beklediği alanları taşıyor mu: **ÖLÇÜLEMEDİ** (mutlu yol alınam
 
 | # | şiddet | bulgu | kanıt | önerilen düzeltme (KOD YAZILMAZ, öneri) | durum (kapanış, YYYY-MM-DD) |
 |---|---|---|---|---|---|
-| **AV-1** | **P1** | **`location_name` ve `language_code` — ikisi de ilan edilen, dokümante edilen, örneklenen alanlar — `aggregated_metrics/live` tarafından `40501 Invalid Field` ile reddediliyor. Tool bu alanlardan biri verildiğinde HER ZAMAN düşer.** 2026-08-25 outage'ının (`internal_list_limit`) aynı sınıfı; o düzeltme yalnız bir alana baktı. Sonuç canlıda ölçüldü: iki deneme hesabın $0,50 günlük ücretsiz-vendor ödeneğini bitirdi ve tool 00:00 UTC'ye kadar durduruldu | Canlı 2026-09-04T01:19:16Z → `Invalid Field: 'location_name'.` · 01:19:47Z → `Invalid Field: 'language_code'.` · 01:20:05Z → ödenek reddi. Kaynak: `llm-mentions.ts:557` (`...localeKeys(query)`) | Vendor'ın `aggregated_metrics` **input şeması** okunup hangi alanların gerçekten yayımlandığı doğrulanmalı (`llm_mentions_locations_and_languages` ucu ayrı bir uçtur — lokal oraya sorulup ID/ad ALINIR mı, yoksa bu uç lokal hiç almaz mı). Alan gerçekten yoksa: şemadan **kaldırılmalı** ve mdx/description'daki "THAT location and language" cümlesi düzeltilmeli. Alan varsa ama DEĞER biçimi farklıysa (ör. `location_name` yerine ülke listesi), doğru biçim gönderilmeli. Her iki durumda da düzeltme, `internal_list_limit` gibi **fixture'la değil vendor şemasıyla** doğrulanmalı | |
-| **AV-2** | **P1** | **Testin PİNİ yanlış yöne bakıyor: `expect(body.location_name).toBe("United States")`** — yani süit, vendor'ın reddettiği alanın ve tam da mdx'in örneklediği değerin telde OLMASINI zorunlu kılıyor. Ders 12'nin en saf hâli: fixture gerçek vendor'dan hoşgörülü olduğu için eksik kısıt GEÇEN teste dönüşmüş. Bu test, başlığında 2026-08-25 outage'ını anlatan dosyanın içinde | `llm-mentions.test.ts` > *"sends the parameters this endpoint publishes, and NOT the ones siblings use"*; M3 (spread silindi) bu testi KIRMIZI yaptı | AV-1 çözülürken bu test de tersine çevrilmeli. Kalıcı çare: bu ailenin fixture'ları vendor'ın **input** şemasından türetilmeli; bugün istek gövdesini doğrulayan tek şey yine bizim yazdığımız bir beklenti | |
+| **AV-1** = **H-1** | **P1** *(hakem turu: P0 DEĞİL — kredi iade edildi, kiracı sızıntısı yok, lokalsiz çağrı çalışıyor: AVC N6)* | **GÖVDE YENİDEN YAZILDI (hakem turu, 2026-09-04). Ölçüm turu metni bu satırın altındaki blokta korunuyor.** **Ölçülen gerçek:** iki ücretli deneme de `platform: chat_gpt` **+** ABD-dışı lokal (`location_name:"Turkey"`, sonra `language_code:"tr"`) ile gitti ve `40501 Invalid Field` aldı (`ai.jsonl` 01:19:15.9Z · 01:19:46.1Z). **Vendor REST dokümanı** (`aggregated_metrics/live` ve `cross_aggregated_metrics/live`) `location_name`, `location_code` (**varsayılan 2840**), `language_code` (**varsayılan `en`**) ve `language_name` alanlarını **YAYIMLIYOR**, ve şu notu düşüyor: *"chat_gpt data is available for United States and English only."* Yani 40501, "alan yok" reddi olarak da **değer × platform kombinasyonu** reddi olarak da okunur — ve **denenen tek kombinasyon `chat_gpt` + ABD-dışıdır**; ne `google` + Turkey ne `chat_gpt` + US/en denendi (H-6). **Gerçek kusur bir platform×lokal MATRİSİNİN yokluğudur:** `chat_gpt` ⇒ yalnız US/en; `google` ⇒ 92 lokasyon, listesi **ÜCRETSİZ** `llm_mentions/locations_and_languages` ucunda. Ürün herhangi bir string'i kabul ediyor, **rezervasyondan önce doğrulamıyor**, ve her deneme $0,30 ödenek yakıyor. Kardeş uç (`ai_visibility_compare` **AVC-2**) bu kaleme **KATLANDI** — `localeKeys` iki gövdeyi de besliyor | Canlı 2026-09-04T01:19:16Z → `Invalid Field: 'location_name'.` · 01:19:47Z → `Invalid Field: 'language_code'.` · 01:20:05Z → ödenek reddi. Kaynak: `llm-mentions.ts:557` (`...localeKeys(query)`) + `:606` (compare). **Vendor dokümanı:** docs.dataforseo.com/v3/ai_optimization/llm_mentions/{aggregated_metrics,cross_aggregated_metrics}/live | **(1) Pre-reserve doğrulama:** `platform === "chat_gpt"` ⇒ lokal alanlar sabitlensin (US/en) ya da verilirse **ücretsiz** reddedilsin; `platform === "google"` ⇒ vendor'ın `locations_and_languages` listesi cache/fixture'a alınıp değer ona karşı doğrulansın. **(2) Fixture GERÇEK yakalanmış cevaptan** türetilsin (bugünkü fixture elle yazılmış). **(3) Description** *"THAT location and language"* cümlesi yeniden yazılsın: `chat_gpt`'de lokal **kullanıcının seçtiği** değildir. **(4) ZORUNLU CANLI ÖLÇÜM — düzeltme sonrası, ödenek 00:00 UTC'de sıfırlandıktan SONRA (yani 2026-09-05+):** `chat_gpt` + US/en **ve** `google` + Turkey/tr, ikisi de. Bu iki hücre ölçülmeden H-1 bir HİPOTEZ olarak kalır | |
+| ~~**AV-2**~~ | ~~P1~~ **GERİ ÇEKİLDİ (hakem turu, 2026-09-04)** | ~~Testin PİNİ yanlış yöne bakıyor~~ — **iddia YANLIŞ ölçülmüş.** `llm-mentions.test.ts:332`'nin `expect(body.location_name).toBe("United States")` beklentisi bir **ters pin değildir**: vendor dokümanına göre `chat_gpt` için **"United States" TEK GEÇERLİ DEĞERDİR**, yani pin doğru yöne bakıyor ve süit doğru şeyi zorunlu kılıyor. **Yerine H-1 geçer.** Gerçekten eksik olan pin şudur: *"`chat_gpt` + ABD-dışı bir lokal, REZERVASYONDAN ÖNCE reddedilir"* — bugün böyle bir iddia hiçbir dosyada yok. **Satır silinmedi** (ders 16: geri çekilen bir iddia, geri çekildiği yazılarak durur) | `llm-mentions.test.ts:332`; M3 (spread silindi) bu testi KIRMIZI yaptı — mutasyonun kırmızı vermesi pinin YÖNÜ hakkında hiçbir şey söylemez (ders 13) | Düzeltme H-1'in (1) maddesindedir; bu satırdan ayrı bir iş çıkmaz | |
 | **AV-3** | **P1** | **DK-3 KISMEN + doktrin çatışması.** `llm-mentions.ts` bu ailedeki tek port ki `settleFailedSpend`'i import etmiyor. Transport ve okunamayan-gövde yollarında rezervasyon AÇIK kalıyor; vendor-refuse yolunda ise **vendor'ın kendi rakamıyla** kapanıyor — ki bu $0,00 olabilir. `budget.ts:194-201` bunu ADIYLA yasaklıyor: *"NOT the vendor's reported cost, even when the failing response carries one … would settle a paid call as free and hand today's remaining budget to the next caller."* İki dosya aynı vendor hakkında zıt iddiada | `llm-mentions.ts:1122-1134`; `grep settleFailedSpend` → llm-mentions 0 eşleşme, 9 kardeş port eşleşme; M1 KIRMIZI | Çatışmayı bir insan çözmeli: ya `budget.ts`'nin doktrini geçerlidir ve bu port da `settleFailedSpend`'e geçer (transport + okunamayan yollar da kapanır), ya da `llm-mentions`'ın gerekçesi kabul edilir ve `budget.ts`'nin uyarısı bu aile için şerh alır. **Bugünkü hâl — iki zıt kural, ikisi de yürürlükte — en kötüsü** | |
 | **AV-4** | **P1** | **H-01 fiyat doktrini hâlâ KANITSIZ ve artık ölçülmüş bir sonucu var.** `internal_list_limit` faturalanan satırı kontrol etmiyor, dolayısıyla 5,58× marj bir BAZ'dır. Ölçülen üst sınırlar: $0,30 / $0,45 / **$1,65** — sonuncusu fleet $3 tavanının %55'i ve hesap başına $0,50 ödeneğin **%330'u**, yani tek bir başarısız 10-hedefli çağrı ödeneği kendi başına bitirir | `estimateLlmMentionsUsd:261` elle hesaplandı; `free-vendor-calls.ts:70,122`; `llm-mentions.ts:38-50, 196-212` şerhi | Operatör imzası (NEVER#6). Vendor'dan **faturalanan satır** üst sınırı alınana kadar `plan.mjs`'in EXCLUDED gerekçesi doğru kalır. Ara adım olarak `internal_list_limit`'in fiyat tabanı olarak kullanımı bırakılıp tahminin gerçekten ölçülebilir bir tavana bağlanması düşünülmeli | |
 | **AV-5** | **P2** | **Başlık BAYAT (ders 16):** `llm-mentions.ts:1078-1081` *"A failure at (2) leaves the reservation open at its full estimate, which is never less than the spend that really happened."* — kod artık 2. yolda kapatıyor, ve kapattığı sayı $0,00 olabilir, yani "asla az değil" yanlış | `:1078-1081` vs `:1105-1111` vs `:1130-1134` | Başlık `attempt()`'in bugünkü üç yolunu anlatacak şekilde güncellensin (AV-3 kararı ne olursa olsun) | |
 | **AV-6** | **P2** | **R-5.5 fan-out şerhi yok.** `AI_FAN_OUT_NOTE` depoda var ve iki tool basıyor; `platform:"google"` tam da Google AI cevaplarını ölçtüğü hâlde `ai_visibility` basmıyor | `grep -rniE "fan.?out" apps/mcp/src`; `serp-features.ts:68` | Şerh, `platform === "google"` cevaplarına eklensin (mevcut sabit yeniden kullanılabilir). NEVER#7 ekseni | |
-| **AV-7** | **P2** | **R-5.9 / R-3.22–3.24: hiçbir AI crawler token'ı üründe yok.** ChatGPT görünürlüğünü ölçen tool, OpenAI'ın yayımladığı tek eyleme dönük tavsiyeyi (robots.txt'te `OAI-SearchBot`) hiç anmıyor. Referansın "token listesi bayatlaması" riski **karşılıksız — liste yok** | `grep -rniE "oai-searchbot\|gptbot\|claudebot\|perplexitybot\|google-extended"` → 0 | Ürün kararı. En ucuz hâli: cevabın sonuna, ölçüm sıfır satır döndüğünde, "ChatGPT'nin sitenizi görebilmesi için OpenAI `OAI-SearchBot`'a izin verilmesini şart koşuyor" gibi TEK bir kaynak-atıflı cümle. Liste eklenirse bayatlama riski AÇILIR — kayda geçsin | |
-| **AV-8** | **P2** | **NEVER#7 metni yalnız KİMLİĞİYLE pinli.** Testler `expect(text).toContain(AI_VISIBILITY_JUDGEMENT_NOTE)` yazıyor; sabitin İÇİ boşaltılırsa süit yeşil kalır. M7: sıralama cümlesi silindi → 4198/4198 geçti | M7 YEŞİL; `ai-visibility.test.ts:394`, `ai-visibility-compare.test.ts:359` | En az bir test, sabitin İÇİNDEKİ yükü taşıyan cümleleri (skor yok / sıralama yok / bildirilmeyen ≠ sıfır) ayrı ayrı `/i` regex'le pinlesin (ders 11: kaynak literali değil, en kısa ayırt edici parça) | |
+| **AV-7** | **P2** *(şiddet değişmedi)* · **AYKIRI → İLGİSİZ + ŞERH** *(hakem turu, 2026-09-04: bu tool bir ÖLÇÜM yüzeyidir ve hiçbir yerde öneri vermiyor; referans satırı bir öneri yüzeyi VARSAYMIŞ — **D4-10**, dördüncü tekrar. Kalem bir "uyum ihlali" değil, bir **ürün kararı** olarak durur; şerh referansa işlendi, satır silinmedi)* | **R-5.9 / R-3.22–3.24: hiçbir AI crawler token'ı üründe yok.** ChatGPT görünürlüğünü ölçen tool, OpenAI'ın yayımladığı tek eyleme dönük tavsiyeyi (robots.txt'te `OAI-SearchBot`) hiç anmıyor. Referansın "token listesi bayatlaması" riski **karşılıksız — liste yok** | `grep -rniE "oai-searchbot\|gptbot\|claudebot\|perplexitybot\|google-extended"` → 0 | Ürün kararı. En ucuz hâli: cevabın sonuna, ölçüm sıfır satır döndüğünde, "ChatGPT'nin sitenizi görebilmesi için OpenAI `OAI-SearchBot`'a izin verilmesini şart koşuyor" gibi TEK bir kaynak-atıflı cümle. Liste eklenirse bayatlama riski AÇILIR — kayda geçsin | |
+| **AV-8** | **P2** | **DARALTILDI (hakem turu, 2026-09-04 = H-4).** ~~NEVER#7 metni yalnız KİMLİĞİYLE pinli; sabitin İÇİ boşaltılırsa süit yeşil kalır~~ — **bu genel iddia ölçülünce YANLIŞ çıktı.** Hakem sabiti tümüyle `""` yaptı (HM2b) ve süit **KIRMIZI** verdi: `ai-visibility.test.ts:395` `/computes no visibility score/i`. Yani sabitin içi boşaltılamıyor, yükün bir kısmı gerçekten pinli. **Kalan gerçek boşluk yalnız İKİ CÜMLEDİR:** *"re-orders nothing / there is nothing to sort by"* ve *"unreported, never as a zero"* — bu ikisi hiçbir regex tarafından tutulmuyor, ve M7 tam olarak birincisini sildiği için yeşil kaldı | M7 YEŞİL (sıralama cümlesi) · **HM2b KIRMIZI** (`ai-visibility.test.ts:395`, `/computes no visibility score/i`) · `ai-visibility-compare.test.ts:359` | En az bir test, sabitin İÇİNDEKİ yükü taşıyan cümleleri (skor yok / sıralama yok / bildirilmeyen ≠ sıfır) ayrı ayrı `/i` regex'le pinlesin (ders 11: kaynak literali değil, en kısa ayırt edici parça) | |
 | **AV-9** | **P2** | Description ve mdx *"this vendor endpoint takes no date range, so there is no period to ask for"* diyor. Uç düzeyinde DOĞRU; ama R-8.7 ailenin **historical** uçlarla genişlediğini kaydediyor, ve cümle aile düzeyinde bir mutlak gibi okunuyor | Referans R-8.7; `llm-mentions.ts:141-147` (yalnız iki `/live` ucu) | Metin şerhi: "*this endpoint*" vurgusu korunsun; ya da bir cümle ile "DataForSEO bu aile için ayrıca historical uçlar yayımlıyor; SeoGrep bugün onları çağırmıyor" denilsin. İmza kalemi değil, metin borcu | |
 | **AV-10** | **P2** | **Hiçbir kapı, bir DFS adaptörünün ilan ettiği istek alanlarının o ucun vendor şemasında var olduğunu ölçmüyor.** AV-1'in kök sebebi budur: 2026-08-25 outage'ı bir alanda kapatıldı, iki alan açık kaldı ve bunu yakalayan tek şey canlı ücretli çağrı oldu | `goals/` listesi; `verify.sh` kapsam tablosu (CLAUDE.md) | `goals/` hedefi ya da bir `check-*` : her `dfs/*.ts` istek gövdesinin anahtarları, o adaptörün başlığında alıntılanan vendor input şemasıyla karşılaştırılsın. Bugün vendor şeması yalnız YORUM olarak duruyor — makine okunur bir yere (fixture ya da JSON) inerse kapıya bağlanabilir | |
-</content>
-</invoke>
+| **H-2** *(hakem turu, yeni)* | **P2** | **Ürün, vendor'ın varsayılanını BİLDİĞİ hâlde "bilmiyorum" diyor — ve bir yerde de "böyle bir kod yok" diyor.** İki yüz: (a) `ai-visibility-shared.ts:97` `locationNameField` (ve ondan üretilen mdx satırı) *"this vendor family publishes no code"* diyor — **YANLIŞ**, vendor `location_code`'u varsayılan **2840** ile yayımlıyor; (b) `ai-visibility-shared.ts:244` çıktı cümlesi *"DataForSEO applied its own default and SeoGrep does not know which"* diyor — **varsayılan biliniyor** (2840 / `en`), yani bu bir *çıplak açıklama* (bare disclosure), bilgisizlik değil. **Dilim 4 sınıf 4'ün (ABD/İngilizce varsayılanının sessizce uygulanması) ALTINCI üyesi**; `format/locale-default.ts` (`twoLetterTld` + `defaultLocaleWarning`) bu aileye **hiç bağlanmamış** | Vendor dokümanı (`location_code` default 2840, `language_code` default `en`) ↔ `ai-visibility-shared.ts:97` ve `:244`; `grep locale-default apps/mcp/src/tools/ai-visibility*` → 0 | (a) "publishes no code" cümlesi **kaldırılsın** ya da doğrusuyla değiştirilsin (kaynak: vendor input şeması). (b) ":244" cümlesi varsayılanı ADIYLA söylesin — Dilim 4/5'te beş tool'a bağlanan `defaultLocaleWarning` deseninin aynısı. **Varsayılan DEĞİŞMEZ** (`locale-default.ts` modül başlığı: fiyat + davranış kararı, imza gerektirir) — değişen yalnız okurun ne öğrendiğidir. H-1 ile aynı PR'da gitmeli: ikisi de aynı matrisi anlatıyor | |
+
+### Korunan ölçüm-turu metni — AV-1 (hakem turu ÖNCESİ gövde, silinmedi)
+
+> **`location_name` ve `language_code` — ikisi de ilan edilen, dokümante edilen, örneklenen alanlar —
+> `aggregated_metrics/live` tarafından `40501 Invalid Field` ile reddediliyor. Tool bu alanlardan biri
+> verildiğinde HER ZAMAN düşer.** 2026-08-25 outage'ının (`internal_list_limit`) aynı sınıfı; o düzeltme
+> yalnız bir alana baktı. Sonuç canlıda ölçüldü: iki deneme hesabın $0,50 günlük ücretsiz-vendor
+> ödeneğini bitirdi ve tool 00:00 UTC'ye kadar durduruldu.
+> *Önerilen düzeltme (ölçüm turu):* vendor'ın `aggregated_metrics` input şeması okunup hangi alanların
+> gerçekten yayımlandığı doğrulanmalı; **alan gerçekten yoksa şemadan kaldırılmalı** ve
+> mdx/description'daki "THAT location and language" cümlesi düzeltilmeli.
+>
+> **Hakem şerhi:** *"Tool bu alanlardan biri verildiğinde HER ZAMAN düşer"* ve *"alan gerçekten yoksa
+> kaldırılmalı"* — ikisi de **n=2, tek platform, tek lokal** üzerinden kurulmuş **hipotezlerdir**; vendor
+> dokümanı üçünü de çürütüyor. Metin burada, **ders 13'ün bu turdaki en pahalı vakası** olarak duruyor:
+> ölçülen bir arızanın teşhisi, ölçülmeden yazıldığında sonraki turu yanlış yöne gönderir (D6-yeni-A).
