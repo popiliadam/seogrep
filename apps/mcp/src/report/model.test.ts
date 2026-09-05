@@ -855,3 +855,88 @@ describe("buildReportModel — GSC section", () => {
     expect(model.gsc).toBeNull();
   });
 });
+
+/**
+ * GR-3 — THE GOOGLE-UPDATE CALENDAR, WHICH THE REPORT WAS THE ONLY DECAY SURFACE WITHOUT.
+ *
+ * `analyze_content_decay` closed this as B-1: a decay list measured across a period a core update
+ * rolled out inside is not necessarily ten content problems, and rewriting ten pages is expensive
+ * work aimed at the wrong thing. It closed it in its own RENDERER, which the report never calls —
+ * the report runs `analyzeContentDecay` directly. Measured live 2026-09-04 on a 15-credit report:
+ * the same window, the same engine, ten decaying pages, and no mention of the March or May 2026
+ * core updates that both landed inside the baseline it compared against.
+ *
+ * The sentence is the SHARED renderUpdateOverlap. These specs pin the WIRE and the two answers —
+ * a period that spans a published update, and one that spans none — never the wording, which has
+ * its own specs in gsc-data/google-updates.test.ts.
+ */
+describe("buildReportModel — the Google-update caveat (GR-3)", () => {
+  /** A pull over `[previousStart .. currentEnd]`, with one decaying page so the list is non-empty. */
+  function pullSpanning(previousStart: string, currentEnd: string): PullData {
+    return {
+      days: 90,
+      current: {
+        start_date: previousStart,
+        end_date: currentEnd,
+        rows: [
+          { query: "old topic", page: "https://example.com/fading", clicks: 5, impressions: 900, ctr: 0.005, position: 14 },
+        ],
+      },
+      previous: {
+        start_date: previousStart,
+        end_date: currentEnd,
+        rows: [
+          { query: "old topic", page: "https://example.com/fading", clicks: 120, impressions: 2000, ctr: 0.06, position: 3 },
+        ],
+      },
+    };
+  }
+
+  function overlapFor(previousStart: string, currentEnd: string): string | null {
+    return (
+      buildReportModel({
+        domain: "example.com",
+        title: "T",
+        generatedAt: AT_ISO,
+        crawl: null,
+        pull: pullSpanning(previousStart, currentEnd),
+      }).opportunities?.updateOverlap ?? null
+    );
+  }
+
+  it("names the updates that rolled out inside the compared period", () => {
+    // 2026-03-24 spam, 2026-03-27 core and 2026-05-21 core all sit in this span.
+    const note = overlapFor("2026-03-01", "2026-06-01");
+    expect(note).toMatch(/march 2026 core update/i);
+    expect(note).toMatch(/may 2026 core update/i);
+    // It says "may be", never "was": Google publishes when an update rolled out, never what it
+    // did to one site.
+    expect(note).toMatch(/may be the update rather than the page/i);
+  });
+
+  it("answers null for a period no published update landed in", () => {
+    // Mid-2025: the nearest entries are 30 Jun 2025 and 26 Aug 2025, both outside this span.
+    expect(overlapFor("2025-07-01", "2025-08-17")).toBeNull();
+  });
+
+  /**
+   * The period is the PREVIOUS window's start through the CURRENT window's end, not the current
+   * window alone — a baseline reshaped by an update distorts every loss measured against it. The
+   * probe puts an update in the BASELINE half only, which is exactly the live B-1 case.
+   */
+  it("spans the baseline window too, not only the window being reported on", () => {
+    const model = buildReportModel({
+      domain: "example.com",
+      title: "T",
+      generatedAt: AT_ISO,
+      crawl: null,
+      pull: {
+        days: 90,
+        // Nothing rolled out inside the current window; the May 2026 core update is in the baseline.
+        current: { start_date: "2026-06-03", end_date: "2026-08-31", rows: [] },
+        previous: { start_date: "2026-05-01", end_date: "2026-06-02", rows: [] },
+      },
+    });
+    expect(model.opportunities?.updateOverlap).toMatch(/may 2026 core update/i);
+  });
+});
