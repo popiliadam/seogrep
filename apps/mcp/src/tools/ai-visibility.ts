@@ -13,6 +13,7 @@ import {
 } from "../dfs/llm-mentions.ts";
 import {
   AI_VISIBILITY_JUDGEMENT_NOTE,
+  canonicalLocale,
   catchVendorFailure,
   fanOutNotes,
   internalListLimitField,
@@ -270,8 +271,8 @@ export function buildAiVisibilityQuery(
   const base = {
     platform: input.platform,
     internal_list_limit: input.internal_list_limit,
-    location_name: input.location_name,
-    language_code: input.language_code,
+    // The vendor's own spelling goes on the wire, not the caller's case. See canonicalLocale.
+    ...canonicalLocale(input),
   };
   switch (input.subject) {
     case "domain": {

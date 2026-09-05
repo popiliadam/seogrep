@@ -188,6 +188,34 @@ export function refinePlatformLocale(input: LocaleInput, ctx: z.RefinementCtx): 
 }
 
 /**
+ * The locale that actually goes ON THE WIRE, in the vendor's own spelling.
+ *
+ * {@link refinePlatformLocale} compares case-blind and trimmed, so `" united states "` is ACCEPTED
+ * — deliberately, because refusing a caller over capitalisation is hostile. But acceptance here is
+ * not acceptance THERE: DataForSEO was never measured taking a lower-case `location_name`, and if
+ * it refuses one, the $0.30 the gate exists to save is spent on precisely the input the gate waved
+ * through. So the accepted value is replaced by the published one before it is sent. This is a
+ * rename, never a widening: the refinement has already proven the two are the same value, and a
+ * value the caller did not send stays unsent (the endpoint's own default then applies).
+ */
+export function canonicalLocale(input: LocaleInput): {
+  location_name: string | undefined;
+  language_code: string | undefined;
+} {
+  const canonical = input.platform === "chat_gpt";
+  return {
+    location_name:
+      input.location_name !== undefined && canonical
+        ? CHAT_GPT_ONLY_LOCATION_NAME
+        : input.location_name,
+    language_code:
+      input.language_code !== undefined && canonical
+        ? CHAT_GPT_ONLY_LANGUAGE_CODE
+        : input.language_code,
+  };
+}
+
+/**
  * `location_name` is what THIS surface sends — a STRING, not the `location_code` NUMBER every
  * other DataForSEO adapter in this repo sends. The description says so, because a caller who knows
  * the other tools will reach for a code.

@@ -11,6 +11,7 @@ import {
   ROW_ORDER,
   ROW_ORDER_MEANS,
   VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+  buildAiVisibilityRequestBody,
   createMockAiVisibilityPort,
   disabledAiVisibilityPort,
   type AiVisibilityResult,
@@ -241,6 +242,29 @@ describe("THE SUBJECT DISCRIMINATION — two subjects, two inputs, nothing borro
     );
     expect(keyword.target).toEqual({ kind: "keyword", keyword: "seo software" });
     expect(keyword.location_name).toBeUndefined();
+  });
+
+  /**
+   * THE GATE COMPARES CASE-BLIND, SO THE WIRE MUST NOT. "united states" is waved through by
+   * refinePlatformLocale, and sending that raw string would leave the $0.30 the gate exists to save
+   * exposed on exactly the input the gate accepts — the vendor was never measured accepting a
+   * lower-case name. What goes out is the vendor's own spelling; `google` is untouched.
+   */
+  it("sends chat_gpt's locale in the vendor's spelling, whatever case the caller typed", () => {
+    const sent = buildAiVisibilityRequestBody(
+      buildAiVisibilityQuery(
+        {
+          subject: "domain",
+          platform: "chat_gpt",
+          internal_list_limit: MAX_INTERNAL_LIST_ROWS,
+          location_name: " united states ",
+          language_code: "EN",
+        },
+        "example.com",
+      ),
+    );
+    expect(sent.location_name).toBe("United States");
+    expect(sent.language_code).toBe("en");
   });
 });
 
