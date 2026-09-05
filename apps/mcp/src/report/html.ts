@@ -1,4 +1,5 @@
 import { describeDataAge } from "@pseo/core";
+import { AVERAGE_POSITION_NOTE } from "../gsc-data/index.ts";
 import {
   DEEP_PAGE_DEPTH,
   HEAVY_PAGE_BYTES,
@@ -554,6 +555,26 @@ function updateOverlapNote(opp: OpportunitySummary): string {
   return `<p class="hint">${escapeHtml(opp.updateOverlap)}</p>`;
 }
 
+/**
+ * What "position 12.4" MEANS, under the one list in this document that prints one (R-7.11, GR-4).
+ *
+ * The two plain-text surfaces built from these same engines — find_quick_wins and
+ * analyze_content_decay — have printed this since their own reviews, and both pin it. The report
+ * did not, and it is the surface that needs it most: it is a link the customer forwards to
+ * someone who never ran the tool. Google's figure is a MEAN over the window, so a page that sat
+ * 5th for half of it and 16th for the other half reports the same "10.5" as one that never moved
+ * — and a "position 8–20" band read as a rank describes a page that does not exist.
+ *
+ * The SHARED constant, imported rather than retyped: one definition of one number, in one file
+ * (gsc-data/format.ts), for all three surfaces. Printed only when a position figure is actually
+ * on the page — the quick-wins rows are the only ones here that carry one, and the report's decay
+ * rows print clicks alone.
+ */
+function positionNote(opp: OpportunitySummary): string {
+  if (opp.quickWins.total === 0) return "";
+  return `<p class="hint">${escapeHtml(AVERAGE_POSITION_NOTE)}</p>`;
+}
+
 function opportunitySection(opp: OpportunitySummary): string {
   const empty =
     opp.quickWins.total === 0 && opp.cannibalization.total === 0 && opp.decay.total === 0;
@@ -581,6 +602,7 @@ function opportunitySection(opp: OpportunitySummary): string {
         `${escapeHtml(w.query)} → ${urlText(w.page)} — position ${fmtPos(w.position)}, ` +
         `${fmtNum(w.impressions)} impressions`,
     )}
+    ${positionNote(opp)}
     ${listBlock(
       "Cannibalized queries (several of your pages competing)",
       opp.cannibalization,

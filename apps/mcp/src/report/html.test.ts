@@ -5,6 +5,7 @@ import {
   REDIRECT_CHAIN_MIN,
   SLOW_PAGE_MS,
 } from "../audit/index.ts";
+import { AVERAGE_POSITION_NOTE } from "../gsc-data/index.ts";
 import type { OpportunitySummary, ReportModel } from "./model.ts";
 import { auditHint, escapeHtml, renderReportHtml } from "./html.ts";
 
@@ -1029,6 +1030,33 @@ describe("Opportunities section (R1-b)", () => {
   it("renders NO Opportunities section at all when there is no pull to analyze", () => {
     const noPull = renderReportHtml({ ...FULL_MODEL, gsc: null, opportunities: null });
     expect(noPull).not.toMatch(/<h2>Opportunities<\/h2>/);
+  });
+
+  /**
+   * GR-4 / R-7.11 — what "position 12.4" means, on the surface that needs it most.
+   *
+   * find_quick_wins (`find-quick-wins.test.ts:586`) and analyze_content_decay
+   * (`gsc-data/format.test.ts:746`) both print this note and both pin it. The shareable report
+   * printed `Quick wins (position 8–20 with demand)` and `position 12.4` with no definition at
+   * all — and it is the artefact the customer forwards to someone who never ran the tool.
+   *
+   * The assertion is on the SHARED CONSTANT, never on a retyped copy of the sentence: a second
+   * literal would let the three surfaces define one number three ways.
+   */
+  describe("the average-position note (GR-4, R-7.11)", () => {
+    it("prints the shared note, exactly once, where a position figure is shown", () => {
+      expect(WITH_OPPS).toContain(escapeHtml(AVERAGE_POSITION_NOTE));
+      expect(WITH_OPPS.split(escapeHtml(AVERAGE_POSITION_NOTE))).toHaveLength(2);
+      // It is the same sentence the plain-text tools print — one definition, one file.
+      expect(AVERAGE_POSITION_NOTE).toMatch(/average/i);
+    });
+
+    it("prints nothing when no position figure is on the page", () => {
+      // FULL_MODEL has no quick wins, so nothing in the section carries a position.
+      const html = renderReportHtml(FULL_MODEL);
+      expect(html).not.toContain(escapeHtml(AVERAGE_POSITION_NOTE));
+      expect(html).not.toMatch(/average over the analyzed window/i);
+    });
   });
 
   /**
