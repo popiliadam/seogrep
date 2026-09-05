@@ -5,6 +5,14 @@
 > Tek gerçek üçlüsü: **`docs/audits/tools/2026-09/_TUR-KAPANIS.md`** (indeks) + altı
 > `_DILIM<n>-KAPANIS.md` + `~/.claude/projects/…/memory/tool-kontrol-turu-2026-09.md`.
 > Bayat bir iddia bulursan önce bu dosyayı düzelt.
+>
+> **2026-09-05 — kalanlar konsolide edildi.** Aşağıdaki "Kalanlar" bölümü bir ÖZETTİR; kalanları
+> kapatacak taze oturumun **tek giriş noktası** artık şudur:
+> **`docs/plans/2026-09-05-KALANLAR-backlog.md`** (+ envanter eki `…-backlog-ek.md`, 121 satır).
+> Orası 121 açık/kısmen/ertelenen/imza kalemini dilim:satır referansıyla sayar, 17 iş paketine
+> keser, 30 imza kalemini `KARAR:` sütunlu bir tabloya döker ve kapanış dosyalarıyla **tutmayan
+> beş sayımı** (T-1..T-5) adıyla yazar. Bu dosyadaki sayılar oradaki tabloyla çelişirse **orası
+> yeni, burası eski** — ve düzelten tur ikisini birden günceller.
 
 ## Kapandı
 
