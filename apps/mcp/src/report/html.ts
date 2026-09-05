@@ -538,6 +538,22 @@ function fmtPos(value: number): string {
  * It is a SUMMARY and says so — the paid discovery tools return the full prioritized breakdown,
  * and this section points at them rather than standing in for them.
  */
+/**
+ * The Google-update caveat, ABOVE the decay list it qualifies (GR-3, and B-1's own rule: "a caveat
+ * printed under thirty 'rewrite this page' lines has already lost that argument").
+ *
+ * TWO CONDITIONS, and each is load-bearing. It prints only when a published update actually landed
+ * inside the compared period — the model answers null otherwise, and a caveat about nothing would
+ * teach the reader to skip it. And it prints only when there IS a decay list: the sentence
+ * qualifies "these pages are losing clicks", so with no such claim on the page it qualifies
+ * nothing. The wording is the SHARED renderUpdateOverlap's, escaped like every other dynamic
+ * value here; a second copy of it is exactly the drift this section exists to close.
+ */
+function updateOverlapNote(opp: OpportunitySummary): string {
+  if (opp.updateOverlap === null || opp.decay.total === 0) return "";
+  return `<p class="hint">${escapeHtml(opp.updateOverlap)}</p>`;
+}
+
 function opportunitySection(opp: OpportunitySummary): string {
   const empty =
     opp.quickWins.total === 0 && opp.cannibalization.total === 0 && opp.decay.total === 0;
@@ -573,6 +589,7 @@ function opportunitySection(opp: OpportunitySummary): string {
         `${fmtNum(g.total_impressions)} impressions`,
     )}
     ${brandNote}
+    ${updateOverlapNote(opp)}
     ${listBlock(
       "Decaying pages (losing clicks vs the previous window)",
       opp.decay,

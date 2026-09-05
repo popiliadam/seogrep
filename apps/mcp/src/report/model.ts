@@ -19,6 +19,7 @@ import {
   analyzeContentDecay,
   detectCannibalization,
   findQuickWinsResult,
+  renderUpdateOverlap,
   STALE_PULL_DAYS,
 } from "../gsc-data/index.ts";
 
@@ -318,6 +319,23 @@ export interface OpportunitySummary {
    */
   readonly brandedExcluded: number;
   readonly decay: CappedList<PageDecay>;
+  /**
+   * The Google-update caveat for the period this decay list was measured over, or null when no
+   * published update rolled out inside it (GR-3, class D3-7's third repeat — closed here).
+   *
+   * WHY IT IS ON THE MODEL AT ALL. `analyze_content_decay` closed this in its own renderer (B-1):
+   * the same engine, over the same window, told a customer to rewrite ten pages while both the
+   * March and the May 2026 core updates sat inside the BASELINE window it compared against. The
+   * report calls `analyzeContentDecay` DIRECTLY and never touches that renderer, so the caveat the
+   * plain-text tool prints was missing from the PAID, shareable artefact — the one surface where
+   * the reader is least able to supply it themselves. The sentence is the SHARED
+   * `renderUpdateOverlap`, not a second copy of the wording, so the two can never disagree.
+   *
+   * It states a fact about the WINDOW, so it is computed whenever a pull is summarized; whether
+   * it is worth printing is the renderer's call (it qualifies the decay list, so an empty decay
+   * list has nothing for it to qualify).
+   */
+  readonly updateOverlap: string | null;
 }
 
 export interface ReportModel {
@@ -537,7 +555,7 @@ function summarizeGsc(pull: PullData, pulledAt: string | null, generatedAt: stri
  * groups are separated here, not in the renderer, so the model carries the same split the
  * detect_cannibalization tool reports and the two can never disagree.
  */
-function summarizeOpportunities(pull: PullData): OpportunitySummary {
+function summarizeOpportunities(pull: PullData, generatedAt: string): OpportunitySummary {
   const quickWins = findQuickWinsResult(pull);
   const groups = detectCannibalization(pull);
   const branded = groups.filter((group) => group.branded);
@@ -546,6 +564,16 @@ function summarizeOpportunities(pull: PullData): OpportunitySummary {
     cannibalization: cap(groups.filter((group) => !group.branded)),
     brandedExcluded: branded.length,
     decay: cap(analyzeContentDecay(pull)),
+    // The period is the PREVIOUS window's start through the CURRENT window's end — the same span
+    // analyze_content_decay uses, and for its reason: a baseline reshaped by an update distorts
+    // every loss measured against it as much as a shift inside the current window does. The
+    // report's own generatedAt is the clock, so the calendar's staleness notice is deterministic
+    // here rather than a function of when the spec happens to run.
+    updateOverlap: renderUpdateOverlap(
+      pull.previous.start_date,
+      pull.current.end_date,
+      new Date(generatedAt),
+    ),
   };
 }
 
@@ -564,7 +592,7 @@ export function buildReportModel(input: ReportInput): ReportModel {
     gsc: input.pull
       ? summarizeGsc(input.pull, input.pulledAt ?? null, input.generatedAt)
       : null,
-    opportunities: input.pull ? summarizeOpportunities(input.pull) : null,
+    opportunities: input.pull ? summarizeOpportunities(input.pull, input.generatedAt) : null,
     // A pull implies a connection; otherwise trust the caller's read of gsc_connections.
     gscConnected: input.gscConnected ?? input.pull !== null,
   };

@@ -5,7 +5,7 @@ import {
   REDIRECT_CHAIN_MIN,
   SLOW_PAGE_MS,
 } from "../audit/index.ts";
-import type { ReportModel } from "./model.ts";
+import type { OpportunitySummary, ReportModel } from "./model.ts";
 import { auditHint, escapeHtml, renderReportHtml } from "./html.ts";
 
 /**
@@ -105,6 +105,7 @@ const FULL_MODEL: ReportModel = {
     cannibalization: EMPTY,
     brandedExcluded: 0,
     decay: EMPTY,
+    updateOverlap: null,
   },
 };
 
@@ -931,7 +932,7 @@ describe("staleness honesty (R1-c)", () => {
 });
 
 describe("Opportunities section (R1-b)", () => {
-  const WITH_OPPS = renderReportHtml({
+  const WITH_OPPS_MODEL: ReportModel = {
     ...FULL_MODEL,
     opportunities: {
       quickWins: {
@@ -964,6 +965,7 @@ describe("Opportunities section (R1-b)", () => {
         total: 1,
       },
       brandedExcluded: 2,
+      updateOverlap: null,
       decay: {
         items: [
           {
@@ -981,7 +983,8 @@ describe("Opportunities section (R1-b)", () => {
         total: 1,
       },
     },
-  });
+  };
+  const WITH_OPPS = renderReportHtml(WITH_OPPS_MODEL);
 
   it("renders all three discovery engines' findings", () => {
     expect(WITH_OPPS).toMatch(/Quick wins/);
@@ -1026,6 +1029,46 @@ describe("Opportunities section (R1-b)", () => {
   it("renders NO Opportunities section at all when there is no pull to analyze", () => {
     const noPull = renderReportHtml({ ...FULL_MODEL, gsc: null, opportunities: null });
     expect(noPull).not.toMatch(/<h2>Opportunities<\/h2>/);
+  });
+
+  /**
+   * GR-3 — the Google-update caveat, and the two things about it that are not the wording.
+   *
+   * WHERE: above the decay list, never below it. That is B-1's own argument, quoted from the
+   * calendar module: "a caveat printed after thirty rows of 'rewrite this page' has already lost
+   * the argument". Measured live 2026-09-04, this section listed ten decaying pages over a period
+   * spanning two 2026 core updates and said nothing at all.
+   *
+   * WHEN: only with a decay list to qualify, and only when the model actually found an overlap.
+   */
+  describe("the Google-update caveat (GR-3)", () => {
+    const NOTE = "Note: the period being compared spans Google's May 2026 core update (21 May).";
+    const withOverlap = (opps: OpportunitySummary) =>
+      renderReportHtml({ ...FULL_MODEL, opportunities: { ...opps, updateOverlap: NOTE } });
+
+    it("prints the caveat ABOVE the decaying-pages list it qualifies", () => {
+      const html = withOverlap(WITH_OPPS_MODEL.opportunities!);
+      // ESCAPED like every other dynamic value in this document — the apostrophe in "Google's"
+      // is the reason the raw sentence is NOT what lands in the markup.
+      expect(html).toContain(escapeHtml(NOTE));
+      expect(html.indexOf(escapeHtml(NOTE))).toBeLessThan(html.indexOf("Decaying pages"));
+    });
+
+    it("prints nothing when there is no decay list for it to qualify", () => {
+      // FULL_MODEL's three engines are all empty: the sentence would qualify a claim nobody made.
+      const html = withOverlap(FULL_MODEL.opportunities!);
+      expect(html).not.toContain(escapeHtml(NOTE));
+      expect(html).not.toMatch(/period being compared/i);
+    });
+
+    it("prints nothing when no published update landed in the period", () => {
+      const html = renderReportHtml({
+        ...FULL_MODEL,
+        opportunities: { ...WITH_OPPS_MODEL.opportunities!, updateOverlap: null },
+      });
+      expect(html).toMatch(/Decaying pages/);
+      expect(html).not.toMatch(/period being compared/i);
+    });
   });
 });
 
