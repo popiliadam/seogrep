@@ -196,3 +196,20 @@ for the full per-page breakdown" diyor), ama merdiven özet ↔ tam döküm ayr�
 15 kredilik raporu alan kullanıcı ardından 80 kredilik bir liste görüyor ve örtüşmeyi hiçbir yerde
 okumuyor. F-1'in (katalog kapsamı, İMZA KALEMİ — operatörde) bitişik yüzü; ayrı bulgu numarası
 **açılmadı**, karar ürün kararıdır ve F-1 zaten imza kuyruğundadır.
+
+### Kapanış notu (2026-09-05) — yalnız bu ekteki iki iddia
+
+Bu tool'un kendi `durum (kapanış, 2026-09-02)` sütununa **dokunulmadı**; aşağıdakiler yalnız yukarıdaki
+Dilim 6 çapraz atıfının akıbetidir.
+
+1. **Sınıf D3-7 — takvim.** Sınıfın gerçek muhatabı `generate_report` çıktı ve orada **KAPANDI #233 +
+   canlı ✔** (deploy `1030e8b`, 15 kredilik dentnotion raporu, çürüme listesinin üstünde
+   `… March 2026 core update (27 Mar), May 2026 core update (21 May) …`). `whats_next` için karar
+   **DEĞİŞMEDİ: KAPSAM DIŞI** — merdiven bir zaman penceresi taşımıyor; `whats-next.ts`'e takvim
+   bağlanmadı ve bağlanmamalıydı. #233 diff'inde `whats-next` **0 eşleşme** (ölçüldü).
+2. **Rapor ilişkisi (özet ↔ tam döküm örtüşmesi).** Ayrı bulgu numarası açılmamıştı ve açılmadı; karar
+   ürün kararıdır ve **F-1 imza kuyruğundadır** (operatörde, Dilim 1'den beri). #233/#234/#235'in
+   hiçbiri `next-step.ts` kataloğuna dokunmadı — ölçüldü.
+
+Tur kapanışı: `_TUR-KAPANIS.md`. Bu tool'un altı P2'si (F-4 · F-5 · F-6 · F-7 · F-8 · F-10) **Dilim 1
+kapanışındaki hâliyle AÇIK kalır** — tur boyunca hiçbir iş emrine girmediler.
