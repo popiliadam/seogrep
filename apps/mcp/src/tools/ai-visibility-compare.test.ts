@@ -435,7 +435,7 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
       location_name: "Turkey",
     });
     expect(refused.isError).toBe(true);
-    expect(refused.content[0]?.text).toMatch(/united states and english only/i);
+    expect(refused.content[0]?.text).toMatch(/for the united states and english only/i);
     expect(refused.content[0]?.text).toMatch(/not charged/i);
 
     // The counter-value: google in the same locale is not refused, so it reaches the guard.

@@ -99,8 +99,9 @@ export function internalListLimitField(vendorMax: number) {
  * happy path could not be measured at all afterwards.
  *
  * NONE OF THAT NEEDED TO BE DISCOVERED BY SPENDING. DataForSEO publishes the rule on both
- * endpoints (read 2026-09-04): "chat_gpt data is available for `United States` and `English`
- * only", and again as codes — "chat_gpt data is available for `2840` location code and `en`
+ * endpoints (read 2026-09-04, re-read 2026-09-05): "chat_gpt data is available for the
+ * `United States` and `English` only", and again as codes — "chat_gpt data is available for
+ * `2840` location code and `en`
  * language code only". `cross_aggregated_metrics` says it as two notes ("for United States only",
  * "for English only"). So a chat_gpt request naming any other locale is refused HERE, for free.
  *
@@ -129,8 +130,8 @@ export const LLM_MENTIONS_DEFAULT_LANGUAGE_CODE = "en";
 
 /** The vendor's sentence, quoted once so no surface paraphrases it into something softer. */
 export const CHAT_GPT_LOCALE_QUOTE =
-  '"chat_gpt data is available for United States and English only" (DataForSEO, LLM Mentions, ' +
-  "read 2026-09-04)";
+  '"chat_gpt data is available for the United States and English only" (DataForSEO, LLM Mentions, ' +
+  "read 2026-09-05)";
 
 /** A caller's locale value, compared the way a NAME or a CODE is compared: trimmed, case-blind. */
 function sameLocaleValue(given: string, published: string): boolean {

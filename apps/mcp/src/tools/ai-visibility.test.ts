@@ -402,7 +402,7 @@ describe("NEVER #7 — one platform, one locale, one moment, and no verdict of o
       ...resultWith([ROW_WITH_ZERO_AND_SILENCE], scope),
       subject: { kind: "domain", domain: "adstark.com.tr" },
     });
-    expect(text).toMatch(/united states and english only/i);
+    expect(text).toMatch(/for the united states and english only/i);
     expect(text).toMatch(/no other locale to ask for/i);
     expect(text).not.toMatch(/pass language_code and location_name for it/);
   });
@@ -709,8 +709,8 @@ describe("ai_visibility free pre-reserve gates (no credit machinery)", () => {
    * until 00:00 UTC — so one caller's locale typo took the tool down for the day.
    *
    * The vendor publishes the rule that makes both refusals predictable without spending anything:
-   * "chat_gpt data is available for United States and English only" (DataForSEO, LLM Mentions
-   * aggregated_metrics, read 2026-09-04). This is that rule applied where it costs nothing. It
+   * "chat_gpt data is available for the United States and English only" (DataForSEO, LLM Mentions
+   * aggregated_metrics, read 2026-09-05). This is that rule applied where it costs nothing. It
    * lands in the SCHEMA, not in the handler, so "before the reserve" is a property of the shape
    * rather than of the order somebody happened to write the gates in.
    */
@@ -722,7 +722,7 @@ describe("ai_visibility free pre-reserve gates (no credit machinery)", () => {
       location_name: "Turkey",
     });
     expect(refused.isError).toBe(true);
-    expect(refused.content[0]?.text).toMatch(/united states and english only/i);
+    expect(refused.content[0]?.text).toMatch(/for the united states and english only/i);
     expect(refused.content[0]?.text).toMatch(/location_name/);
     expect(refused.content[0]?.text).toMatch(/not charged/i);
   });
