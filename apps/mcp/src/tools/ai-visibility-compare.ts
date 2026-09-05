@@ -20,6 +20,7 @@ import {
   catchVendorFailure,
   internalListLimitField,
   languageCodeField,
+  localeNotes,
   locationNameField,
   notEnabledMessage,
   platformField,
@@ -336,6 +337,14 @@ export function formatAiVisibilityCompare(
       `LLM Mentions ${vendorFunctionOf(DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT)}, ` +
       "one request for all of them.",
     renderMeasurementScope(result.scope),
+    // The locale paragraphs, on the domains this comparison RESOLVED to — a keyword target
+    // carries no country to argue from, so it contributes none.
+    ...localeNotes(
+      result.scope,
+      resolved.flatMap((target) =>
+        target.group.target.kind === "domain" ? [target.group.target.domain] : [],
+      ),
+    ),
     `${CALLER_ORDER_NOTE} ${renderRowCaption(result.result_set, "row")}`,
     resolved
       .map((target, index) =>

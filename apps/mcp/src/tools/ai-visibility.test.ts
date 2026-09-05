@@ -25,7 +25,12 @@ import {
   formatAiVisibility,
   makeAiVisibilityTool,
 } from "./ai-visibility.ts";
-import { AI_VISIBILITY_JUDGEMENT_NOTE, catchVendorFailure } from "./ai-visibility-shared.ts";
+import {
+  AI_VISIBILITY_JUDGEMENT_NOTE,
+  UNVALIDATED_LOCALE_NOTE,
+  catchVendorFailure,
+} from "./ai-visibility-shared.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
 import crossFixture from "../dfs/fixtures/llm-mentions-cross-aggregated-metrics.json";
@@ -315,11 +320,103 @@ describe("NEVER #7 — one platform, one locale, one moment, and no verdict of o
     expect(text).toMatch(/rather than one the vendor confirmed/i);
   });
 
-  it("names the locale it asked under — or says plainly that none was specified", async () => {
+  /**
+   * H-2 — THE DEFAULT IS NAMED, because it is KNOWN. This used to end "…so DataForSEO applied its
+   * own default and SeoGrep does not know which": an honest sentence about a fact nobody had
+   * looked up. The vendor publishes both defaults on both endpoints (`location_code` 2840,
+   * `language_code` `en`), so the answer names the locale the lookup really ran in. "We do not
+   * know" and "the United States, in English" are different answers to a 90-credit question, and
+   * only one of them can be acted on.
+   */
+  it("names the locale it asked under — and NAMES the vendor default when none was specified", async () => {
     expect(await fixtureAnswer()).toContain('location_name "United States", language_code "en"');
     const silent = formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], SILENT_SCOPE));
     expect(silent).toMatch(/location_name not specified in this request/i);
     expect(silent).toMatch(/language_code not specified in this request/i);
+    expect(silent).toMatch(/published default — location_code 2840, the United States/i);
+    expect(silent).toMatch(/published default — "en", English/i);
+    // ...and the withdrawn claim is not restated anywhere.
+    expect(silent).not.toMatch(/does not know which/i);
+  });
+
+  /**
+   * H-2 — THE US/ENGLISH DEFAULT WARNING, joined rather than re-worded. This family is the sixth
+   * member of the class format/locale-default.ts was written for, and the module's own rule is
+   * that one mistake gets ONE sentence: on `google` the shared sentence is used verbatim, with
+   * the parameter names THIS family takes substituted in (a location NAME, not a location code).
+   */
+  it("warns a country-code TLD subject riding the default locale, in the shared wording", () => {
+    const scope: MeasurementScope = { ...SILENT_SCOPE, platform_requested: "google" };
+    const text = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], scope),
+      subject: { kind: "domain", domain: "adstark.com.tr" },
+    });
+    expect(text).toContain(
+      defaultLocaleWarning(
+        "adstark.com.tr",
+        { language_code: "en", location_code: 2840 },
+        { language: "language_code", location: "location_name", noun: "value" },
+      ),
+    );
+    // It tells the caller a parameter this tool actually takes.
+    expect(text).toMatch(/pass language_code and location_name for it/);
+    expect(text).not.toMatch(/pass language_code and location_code for it/);
+  });
+
+  /**
+   * ...and on `chat_gpt` the ADVICE has to differ, because "pass the locale for that country" is
+   * advice DataForSEO refuses. The trigger is the same; the next step is the other platform.
+   */
+  it("tells a chat_gpt caller the locale cannot be changed, not to change it", () => {
+    const scope: MeasurementScope = {
+      ...SILENT_SCOPE,
+      platform_requested: "chat_gpt",
+      platform_means: PLATFORM_MEANS.chat_gpt,
+    };
+    const text = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], scope),
+      subject: { kind: "domain", domain: "adstark.com.tr" },
+    });
+    expect(text).toMatch(/united states and english only/i);
+    expect(text).toMatch(/no other locale to ask for/i);
+    expect(text).not.toMatch(/pass language_code and location_name for it/);
+  });
+
+  /** A keyword carries no country, and a caller who CHOSE a locale is not second-guessed. */
+  it("stays silent when the subject has no country-code TLD, or the caller named a locale", () => {
+    const keyword = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], SILENT_SCOPE),
+      subject: { kind: "keyword", keyword: "seo software" },
+    });
+    expect(keyword).not.toMatch(/two-letter country-code TLD/i);
+    const chosen = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], FULL_SCOPE),
+      subject: { kind: "domain", domain: "adstark.com.tr" },
+    });
+    expect(chosen).not.toMatch(/two-letter country-code TLD/i);
+  });
+
+  /**
+   * WHAT WAS NOT CHECKED, said out loud. A `google` locale is passed straight to the vendor:
+   * SeoGrep does not hold the vendor's free `locations_and_languages` list, so it is not claiming
+   * the value is valid. A locale the vendor has no data for comes back THIN rather than as an
+   * error — the shape that reads as "nobody mentions you".
+   */
+  it("says a google locale was not validated, and says nothing of the sort on chat_gpt", () => {
+    const scope: MeasurementScope = {
+      ...FULL_SCOPE,
+      platform_requested: "google",
+      platform_means: PLATFORM_MEANS.google,
+      location_name: "Turkey",
+      language_code: "tr",
+    };
+    const text = formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], scope));
+    expect(text).toContain(UNVALIDATED_LOCALE_NOTE);
+    expect(text).toMatch(/locations_and_languages/);
+    // chat_gpt's locale IS checked — claiming otherwise there would be false modesty.
+    expect(formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], FULL_SCOPE))).not.toContain(
+      UNVALIDATED_LOCALE_NOTE,
+    );
   });
 
   /**

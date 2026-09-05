@@ -16,6 +16,7 @@ import {
   catchVendorFailure,
   internalListLimitField,
   languageCodeField,
+  localeNotes,
   locationNameField,
   notEnabledMessage,
   platformField,
@@ -221,10 +222,18 @@ function renderNoRows(result: AiVisibilityResult, project?: ProjectRef | null): 
     `No AI-mention rows for ${describeSubject(result.subject, project)} — DataForSEO LLM Mentions ` +
       `${vendorFunctionOf(DFS_LLM_MENTIONS_AGGREGATED_METRICS_ENDPOINT)}.`,
     renderMeasurementScope(result.scope),
+    // The locale paragraphs belong HERE most of all: an empty answer under a default locale is
+    // exactly the shape that reads as "nobody mentions you" when it may be a locale question.
+    ...localeNotes(result.scope, subjectDomains(result)),
     "DataForSEO returned no row for this lookup. That is an answer about this platform, this " +
       "locale and the moment the vendor measured — it is not a statement that nobody ever " +
       "mentions this, and it is not a zero: the vendor reported nothing to count.",
   ].join("\n\n");
+}
+
+/** The domain this lookup resolved to, if it has one — a keyword subject carries no country. */
+function subjectDomains(result: AiVisibilityResult): readonly string[] {
+  return result.subject.kind === "domain" ? [result.subject.domain] : [];
 }
 
 /** Render one lookup as the plain-text tool output (pure — unit-tested directly). */
@@ -238,6 +247,7 @@ export function formatAiVisibility(
   return [
     renderHeading(result, project),
     renderMeasurementScope(result.scope),
+    ...localeNotes(result.scope, subjectDomains(result)),
     `Rows — ${renderRowCaption(result.result_set, "row")}`,
     result.result_set.rows.map(renderRow).join("\n"),
     `Row order: ${result.row_order_means}`,
