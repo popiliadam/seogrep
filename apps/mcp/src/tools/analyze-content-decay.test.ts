@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { pullData, SAMPLE_PULL } from "../gsc-data/fixtures.ts";
 import { gscRow } from "../gsc-data/fixtures.ts";
-import type { PullData } from "../gsc-data/index.ts";
+import {
+  GOOGLE_UPDATES_VERIFIED_ON,
+  UPDATE_CALENDAR_STALE_DAYS,
+  type PullData,
+} from "../gsc-data/index.ts";
 import { renderContentDecay } from "./analyze-content-decay.ts";
 
 /**
@@ -35,6 +39,33 @@ const QUIET_PULL: PullData = {
   },
 };
 
+/**
+ * THE CLOCK IS FROZEN, and here it defuses a DATED bomb rather than one already gone off.
+ *
+ * `renderContentDecay` takes no `now`, so `renderUpdateOverlap` falls through to
+ * `isUpdateCalendarStale(new Date())` — the wall clock. On GOOGLE_UPDATES_VERIFIED_ON +
+ * UPDATE_CALENDAR_STALE_DAYS the product will correctly append " This update list was last
+ * checked on … " to the note line, and every assertion below reads that same line. They survive
+ * today only because each is a `toContain`, which is precisely how find_quick_wins' provenance
+ * spec survived until someone anchored it — that one carried a fuse nobody had written down, and
+ * it went off on a docs-only PR. This one's fuse is 90 days after the calendar was verified.
+ *
+ * Frozen inside the window, so the notes below mean what they were written to mean; the pair at
+ * the bottom of this block then drives the clock ACROSS the threshold on purpose, so the branch
+ * is measured rather than merely avoided.
+ */
+const VERIFIED_MS = Date.parse(`${GOOGLE_UPDATES_VERIFIED_ON}T00:00:00Z`);
+const CALENDAR_FRESH = new Date(VERIFIED_MS + 86_400_000);
+
+beforeAll(() => {
+  // Date only — faking the timer queue would hang anything that awaited one.
+  vi.useFakeTimers({ now: CALENDAR_FRESH, toFake: ["Date"] });
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
+
 describe("analyze_content_decay names an algorithm update the compared period spans (B-1)", () => {
   it("puts the update note ABOVE the list, not under it", () => {
     // SAMPLE_PULL compares 2026-01-19..2026-04-18 with 2026-04-19..2026-07-17 — a span holding
@@ -65,6 +96,42 @@ describe("analyze_content_decay names an algorithm update the compared period sp
     const text = renderContentDecay(QUIET_PULL).text;
     expect(text).not.toMatch(/update/i);
     expect(text).toContain("decaying page");
+  });
+
+  /**
+   * BOTH SIDES OF THE CALENDAR'S OWN STALENESS, with the threshold IMPORTED rather than typed:
+   * the note line is the only place this self-report can appear, and until now nothing measured
+   * it from the tool at all — the branch would simply have switched on one day in December and
+   * changed what every customer read, with no spec noticing either state.
+   *
+   * The clock is driven ACROSS the threshold here, which is what the frozen base makes possible:
+   * a wall-clock spec can only ever observe whichever side of the fuse the calendar happens to
+   * be on today.
+   */
+  it("keeps the note free of the self-report while the update calendar is still fresh", () => {
+    const lines = renderContentDecay(SAMPLE_PULL).text.split("\n");
+
+    expect(lines[0]).toMatch(/before rewriting any of them\.$/);
+    expect(lines[0]).not.toMatch(/last checked on/);
+  });
+
+  it("appends the self-report to that same line once the calendar goes unverified", () => {
+    vi.setSystemTime(new Date(VERIFIED_MS + (UPDATE_CALENDAR_STALE_DAYS + 1) * 86_400_000));
+    try {
+      const lines = renderContentDecay(SAMPLE_PULL).text.split("\n");
+
+      expect(lines[0]).toMatch(
+        new RegExp(
+          `before rewriting any of them\\. This update list was last checked on ` +
+            `${GOOGLE_UPDATES_VERIFIED_ON} and may be missing newer ones\\.$`,
+        ),
+      );
+      // It rides on the note line rather than becoming one, so the block's shape is unchanged.
+      expect(lines[1]).toBe("");
+      expect(renderContentDecay(SAMPLE_PULL).text).toContain("decaying page");
+    } finally {
+      vi.setSystemTime(CALENDAR_FRESH);
+    }
   });
 
   it("keeps the note out of the STORED report — the row holds the measurement", () => {

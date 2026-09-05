@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { analyzeTitleQueryMatch } from "@pseo/core";
 import type { AuthContext } from "../auth.ts";
 import type { AuditCrawl, AuditPage, CrawlLoad } from "../audit/index.ts";
@@ -33,6 +33,30 @@ const PULL_JOB_ID = "11112222-3333-4444-5555-666677778888";
 const CRAWL_JOB_ID = "99998888-7777-6666-5555-444433332222";
 const PULLED_AT = "2026-08-06T09:00:00.000Z";
 const FETCHED_AT = "2026-08-07T10:00:00.000Z";
+
+/**
+ * THE CLOCK IS FROZEN, for the reason find-quick-wins.test.ts states at length: the two fixtures
+ * above are pinned to the calendar, while the provenance line the tool prints is computed against
+ * `new Date()` (renderPullProvenance's default, gsc-data/load.ts). The distance between fixture
+ * and assertion therefore grew by a day every real day.
+ *
+ * THIS FILE WAS NEVER RED, and that is the point rather than a reason to skip it. Its date
+ * assertion was a `toContain`, so when the pull crossed the staleness threshold on 2026-09-05 the
+ * tool began appending "This data is stale — …" and the spec simply did not look: the subject
+ * drifted under an assertion too loose to notice. Surviving by the looseness of one matcher is
+ * luck, not design, and the first person to tighten that line would have inherited the same bomb
+ * that went off in find_quick_wins. Frozen a day after the crawl, so both fixtures stay fresh.
+ */
+const FROZEN_NOW = new Date("2026-08-08T09:00:00.000Z");
+
+beforeAll(() => {
+  // Date only — the tool's path is promises, and faking the timer queue would hang an await.
+  vi.useFakeTimers({ now: FROZEN_NOW, toFake: ["Date"] });
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
 
 /**
  * A pull whose CURRENT window seeds one of each outcome against the crawl below:
@@ -279,7 +303,11 @@ describe("the delivered report", () => {
   it("prints the pull window, its date, and the crawl's own date", async () => {
     const text = await textOf();
     expect(text).toContain("Analyzed window: 2026-04-19..2026-07-17 (90 days)");
-    expect(text).toContain("Search Console data pulled 2026-08-06");
+    // WHOLE LINE, not a prefix: with the clock frozen two days after the pull the provenance line
+    // is the bare dated sentence, and the ABSENCE of the staleness tail is now asserted rather
+    // than merely unnoticed. Both sides of that threshold are pinned on this renderer in
+    // find-quick-wins.test.ts; what this line owns is that audit_content reaches it at all.
+    expect(text).toMatch(/^Search Console data pulled 2026-08-06 \(2 days ago\)\.$/m);
     expect(text).toContain("Crawl data fetched 2026-08-07.");
   });
 
