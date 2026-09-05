@@ -1,4 +1,5 @@
 import { describeDataAge } from "@pseo/core";
+import { AVERAGE_POSITION_NOTE } from "../gsc-data/index.ts";
 import {
   DEEP_PAGE_DEPTH,
   HEAVY_PAGE_BYTES,
@@ -289,6 +290,26 @@ function unclassifiedStatusBlock(tech: TechSummary): string {
  * Every threshold in the copy is INTERPOLATED FROM THE RULE'S OWN CONSTANT, never retyped, so the
  * number a reader is given and the number the rule used cannot drift apart (audit/format.ts).
  */
+/**
+ * WHY "Redirects (3xx) = 0" AND "Redirect chains (2+ hops) (7)" ARE BOTH TRUE (GR-7).
+ *
+ * Measured live 2026-09-04: a report printed exactly that pair, side by side, with nothing saying
+ * they count different populations. They do. The status counters count CRAWLED PAGES by their
+ * final status, while a chain is the sequence the crawler followed to reach one — its intermediate
+ * hops are never crawled pages, so they can never appear in the 3xx tally. Two numbers that look
+ * like they contradict each other, and a reader with no way to tell that they do not.
+ *
+ * The pattern is `unclassifiedStatusBlock`'s, one section above: when a set of numbers does not
+ * add up the way a reader would expect, the document says so in its own words rather than leaving
+ * the arithmetic as an exercise. Printed only when there IS a chain list to explain.
+ */
+function redirectPopulationNote(tech: TechSummary): string {
+  if (tech.redirectChains.total === 0) return "";
+  return `<p class="hint">These two numbers count different things: the status counts above are
+    CRAWLED pages by their final status, while the intermediate hops of a chain are never crawled
+    pages — so a site can show 0 redirects and still have chains here.</p>`;
+}
+
 function techSection(tech: TechSummary): string {
   return `<section class="rpt">
     <h2>Technical health</h2>
@@ -310,7 +331,7 @@ function techSection(tech: TechSummary): string {
       `Redirect chains (${fmtNum(REDIRECT_CHAIN_MIN)}+ hops)`,
       tech.redirectChains,
       (c) => [...c.chain, c.url].map(urlText).join(" → "),
-    )}
+    )}${redirectPopulationNote(tech)}
     ${listBlock(
       "X-Robots-Tag conflicts (header says noindex, meta does not)",
       tech.xRobotsConflicts,
@@ -440,6 +461,19 @@ function schemaSection(schema: SchemaSummary): string {
         against the stored JSON-LD bodies on ${fmtNum(schema.pagesValidated)} page(s).`
       : `Detection is JSON-LD only (microdata/RDFa are not read); only @type names are analyzed,
         never the JSON-LD body.`;
+  // WHAT THE @type LIST IS A LIST OF (GR-6). Measured live 2026-09-04: the top five read
+  // `Dentist · BreadcrumbList · ListItem · Person · GeoCoordinates`, in one undifferentiated
+  // column. ListItem and GeoCoordinates are NESTED NODES inside the entries above them and produce
+  // no rich result on their own, so five rows read as five kinds of coverage where there are two
+  // or three. The counting is audit_schema's and is not changed here; what changes is that the
+  // report says which population it is showing instead of letting the reader assume.
+  const typePopulation =
+    schema.topTypes.length === 0
+      ? ""
+      : `<p class="hint">These are the @type names the pages DECLARE, nested nodes included — a
+        type such as <code>ListItem</code> or <code>GeoCoordinates</code> sits inside another
+        entry rather than being eligible for a rich result on its own. Run
+        <code>audit_schema</code> for the per-page breakdown.</p>`;
   return `<section class="rpt">
     <h2>Structured data</h2>
     <div class="stats">
@@ -448,6 +482,7 @@ function schemaSection(schema: SchemaSummary): string {
       ${statBlock(schema.pageCount, "Pages crawled")}
     </div>
     ${types}
+    ${typePopulation}
     ${listBlock(
       "Required fields missing",
       schema.missingFields,
@@ -538,6 +573,42 @@ function fmtPos(value: number): string {
  * It is a SUMMARY and says so — the paid discovery tools return the full prioritized breakdown,
  * and this section points at them rather than standing in for them.
  */
+/**
+ * The Google-update caveat, ABOVE the decay list it qualifies (GR-3, and B-1's own rule: "a caveat
+ * printed under thirty 'rewrite this page' lines has already lost that argument").
+ *
+ * TWO CONDITIONS, and each is load-bearing. It prints only when a published update actually landed
+ * inside the compared period — the model answers null otherwise, and a caveat about nothing would
+ * teach the reader to skip it. And it prints only when there IS a decay list: the sentence
+ * qualifies "these pages are losing clicks", so with no such claim on the page it qualifies
+ * nothing. The wording is the SHARED renderUpdateOverlap's, escaped like every other dynamic
+ * value here; a second copy of it is exactly the drift this section exists to close.
+ */
+function updateOverlapNote(opp: OpportunitySummary): string {
+  if (opp.updateOverlap === null || opp.decay.total === 0) return "";
+  return `<p class="hint">${escapeHtml(opp.updateOverlap)}</p>`;
+}
+
+/**
+ * What "position 12.4" MEANS, under the one list in this document that prints one (R-7.11, GR-4).
+ *
+ * The two plain-text surfaces built from these same engines — find_quick_wins and
+ * analyze_content_decay — have printed this since their own reviews, and both pin it. The report
+ * did not, and it is the surface that needs it most: it is a link the customer forwards to
+ * someone who never ran the tool. Google's figure is a MEAN over the window, so a page that sat
+ * 5th for half of it and 16th for the other half reports the same "10.5" as one that never moved
+ * — and a "position 8–20" band read as a rank describes a page that does not exist.
+ *
+ * The SHARED constant, imported rather than retyped: one definition of one number, in one file
+ * (gsc-data/format.ts), for all three surfaces. Printed only when a position figure is actually
+ * on the page — the quick-wins rows are the only ones here that carry one, and the report's decay
+ * rows print clicks alone.
+ */
+function positionNote(opp: OpportunitySummary): string {
+  if (opp.quickWins.total === 0) return "";
+  return `<p class="hint">${escapeHtml(AVERAGE_POSITION_NOTE)}</p>`;
+}
+
 function opportunitySection(opp: OpportunitySummary): string {
   const empty =
     opp.quickWins.total === 0 && opp.cannibalization.total === 0 && opp.decay.total === 0;
@@ -565,6 +636,7 @@ function opportunitySection(opp: OpportunitySummary): string {
         `${escapeHtml(w.query)} → ${urlText(w.page)} — position ${fmtPos(w.position)}, ` +
         `${fmtNum(w.impressions)} impressions`,
     )}
+    ${positionNote(opp)}
     ${listBlock(
       "Cannibalized queries (several of your pages competing)",
       opp.cannibalization,
@@ -573,6 +645,7 @@ function opportunitySection(opp: OpportunitySummary): string {
         `${fmtNum(g.total_impressions)} impressions`,
     )}
     ${brandNote}
+    ${updateOverlapNote(opp)}
     ${listBlock(
       "Decaying pages (losing clicks vs the previous window)",
       opp.decay,

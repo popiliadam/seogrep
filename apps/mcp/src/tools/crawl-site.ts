@@ -18,6 +18,7 @@ import {
 import {
   ARCHIVED_PROJECT_MESSAGE,
   loadOwnProject,
+  projectNotFoundMessage,
   type ProjectRef,
 } from "./project-target.ts";
 import {
@@ -385,11 +386,12 @@ export function makeCrawlSiteTool(deps: CrawlSiteDeps = {}): RegisteredTool {
         // exists and the worker's 20-credit reserve is never opened. The registry's refundAssurance
         // cannot make that promise for a charge:"worker" tool — it cannot see whether a job was
         // created — but this branch can, because it is the code that decided not to create one.
-        return errorResult(
-          withNoChargeNote(
-            `No project found with id ${project_id}. Create one with setup_project first.`,
-          ),
-        );
+        //
+        // THE SHARED SENTENCE (S6/GR-8 — the second of the two tools still writing their own;
+        // connect_gsc closed the first in #203). withNoChargeNote is KEPT rather than dropped: it
+        // is the one append rule for this family, and it is a no-op on a message that already
+        // states no charge, which projectNotFoundMessage does.
+        return errorResult(withNoChargeNote(projectNotFoundMessage(project_id)));
       }
       // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
       // indistinguishable from one that does not exist (see project-target.ts). Refusing here —

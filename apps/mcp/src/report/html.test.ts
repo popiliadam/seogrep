@@ -5,7 +5,8 @@ import {
   REDIRECT_CHAIN_MIN,
   SLOW_PAGE_MS,
 } from "../audit/index.ts";
-import type { ReportModel } from "./model.ts";
+import { AVERAGE_POSITION_NOTE } from "../gsc-data/index.ts";
+import type { OpportunitySummary, ReportModel } from "./model.ts";
 import { auditHint, escapeHtml, renderReportHtml } from "./html.ts";
 
 /**
@@ -105,6 +106,7 @@ const FULL_MODEL: ReportModel = {
     cannibalization: EMPTY,
     brandedExcluded: 0,
     decay: EMPTY,
+    updateOverlap: null,
   },
 };
 
@@ -931,7 +933,7 @@ describe("staleness honesty (R1-c)", () => {
 });
 
 describe("Opportunities section (R1-b)", () => {
-  const WITH_OPPS = renderReportHtml({
+  const WITH_OPPS_MODEL: ReportModel = {
     ...FULL_MODEL,
     opportunities: {
       quickWins: {
@@ -964,6 +966,7 @@ describe("Opportunities section (R1-b)", () => {
         total: 1,
       },
       brandedExcluded: 2,
+      updateOverlap: null,
       decay: {
         items: [
           {
@@ -981,7 +984,8 @@ describe("Opportunities section (R1-b)", () => {
         total: 1,
       },
     },
-  });
+  };
+  const WITH_OPPS = renderReportHtml(WITH_OPPS_MODEL);
 
   it("renders all three discovery engines' findings", () => {
     expect(WITH_OPPS).toMatch(/Quick wins/);
@@ -1026,6 +1030,115 @@ describe("Opportunities section (R1-b)", () => {
   it("renders NO Opportunities section at all when there is no pull to analyze", () => {
     const noPull = renderReportHtml({ ...FULL_MODEL, gsc: null, opportunities: null });
     expect(noPull).not.toMatch(/<h2>Opportunities<\/h2>/);
+  });
+
+  /**
+   * GR-4 / R-7.11 — what "position 12.4" means, on the surface that needs it most.
+   *
+   * find_quick_wins (`find-quick-wins.test.ts:586`) and analyze_content_decay
+   * (`gsc-data/format.test.ts:746`) both print this note and both pin it. The shareable report
+   * printed `Quick wins (position 8–20 with demand)` and `position 12.4` with no definition at
+   * all — and it is the artefact the customer forwards to someone who never ran the tool.
+   *
+   * The assertion is on the SHARED CONSTANT, never on a retyped copy of the sentence: a second
+   * literal would let the three surfaces define one number three ways.
+   */
+  describe("the average-position note (GR-4, R-7.11)", () => {
+    it("prints the shared note, exactly once, where a position figure is shown", () => {
+      expect(WITH_OPPS).toContain(escapeHtml(AVERAGE_POSITION_NOTE));
+      expect(WITH_OPPS.split(escapeHtml(AVERAGE_POSITION_NOTE))).toHaveLength(2);
+      // It is the same sentence the plain-text tools print — one definition, one file.
+      expect(AVERAGE_POSITION_NOTE).toMatch(/average/i);
+    });
+
+    it("prints nothing when no position figure is on the page", () => {
+      // FULL_MODEL has no quick wins, so nothing in the section carries a position.
+      const html = renderReportHtml(FULL_MODEL);
+      expect(html).not.toContain(escapeHtml(AVERAGE_POSITION_NOTE));
+      expect(html).not.toMatch(/average over the analyzed window/i);
+    });
+  });
+
+  /**
+   * GR-3 — the Google-update caveat, and the two things about it that are not the wording.
+   *
+   * WHERE: above the decay list, never below it. That is B-1's own argument, quoted from the
+   * calendar module: "a caveat printed after thirty rows of 'rewrite this page' has already lost
+   * the argument". Measured live 2026-09-04, this section listed ten decaying pages over a period
+   * spanning two 2026 core updates and said nothing at all.
+   *
+   * WHEN: only with a decay list to qualify, and only when the model actually found an overlap.
+   */
+  describe("the Google-update caveat (GR-3)", () => {
+    const NOTE = "Note: the period being compared spans Google's May 2026 core update (21 May).";
+    const withOverlap = (opps: OpportunitySummary) =>
+      renderReportHtml({ ...FULL_MODEL, opportunities: { ...opps, updateOverlap: NOTE } });
+
+    it("prints the caveat ABOVE the decaying-pages list it qualifies", () => {
+      const html = withOverlap(WITH_OPPS_MODEL.opportunities!);
+      // ESCAPED like every other dynamic value in this document — the apostrophe in "Google's"
+      // is the reason the raw sentence is NOT what lands in the markup.
+      expect(html).toContain(escapeHtml(NOTE));
+      expect(html.indexOf(escapeHtml(NOTE))).toBeLessThan(html.indexOf("Decaying pages"));
+    });
+
+    it("prints nothing when there is no decay list for it to qualify", () => {
+      // FULL_MODEL's three engines are all empty: the sentence would qualify a claim nobody made.
+      const html = withOverlap(FULL_MODEL.opportunities!);
+      expect(html).not.toContain(escapeHtml(NOTE));
+      expect(html).not.toMatch(/period being compared/i);
+    });
+
+    it("prints nothing when no published update landed in the period", () => {
+      const html = renderReportHtml({
+        ...FULL_MODEL,
+        opportunities: { ...WITH_OPPS_MODEL.opportunities!, updateOverlap: null },
+      });
+      expect(html).toMatch(/Decaying pages/);
+      expect(html).not.toMatch(/period being compared/i);
+    });
+  });
+});
+
+/**
+ * TWO NUMBERS THAT LOOK LIKE THEY DISAGREE, AND ONE THAT LOOKS LIKE FIVE THINGS (GR-6, GR-7).
+ *
+ * Both were measured on the same live 15-credit report, 2026-09-04, and both are the same class
+ * of defect: a figure whose POPULATION is not the one the reader assumes, with nothing on the
+ * page to say so. Neither number changes here — the counting belongs to the audit engines — only
+ * what the document says about what it is counting.
+ */
+describe("the report says WHAT its numbers count (GR-6, GR-7)", () => {
+  it("explains that redirect chains and the 3xx count are different populations", () => {
+    const html = renderReportHtml(ENRICHED);
+    expect(html).toMatch(/Redirect chains/);
+    expect(html).toMatch(/count different things/i);
+    // The source wraps this sentence across lines, so the pin is the shortest distinguishing
+    // phrase that survives the wrap (signed lesson 11), not a copy of the source literal.
+    expect(html).toMatch(/intermediate hops of a chain are never crawled/i);
+  });
+
+  it("says nothing about populations when there is no chain list to explain", () => {
+    // FULL_MODEL has no chains: an explanation of a comparison nobody can make is noise.
+    expect(renderReportHtml(FULL_MODEL)).not.toMatch(/count different things/i);
+  });
+
+  it("says the @type list includes nested nodes, which are not rich-result types", () => {
+    const html = renderReportHtml(FULL_MODEL);
+    expect(html).toMatch(/@type names the pages DECLARE, nested nodes included/i);
+
+    // The two names the live report showed as if they were coverage of their own.
+    expect(html).toMatch(/ListItem/);
+    expect(html).toMatch(/GeoCoordinates/);
+  });
+
+  it("says nothing about the @type population when no type was found", () => {
+    const noTypes = renderReportHtml({
+      ...FULL_MODEL,
+      schema: { ...FULL_MODEL.schema!, topTypes: [] },
+    });
+    expect(noTypes).toMatch(/No JSON-LD structured data found/);
+    expect(noTypes).not.toMatch(/nested nodes included/i);
   });
 });
 

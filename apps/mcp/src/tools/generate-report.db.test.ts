@@ -7,7 +7,7 @@ import { base58Encode } from "@pseo/core";
 import { getServiceClient, type Database, type Json } from "../db.ts";
 import { TOOL_COSTS } from "../credits/costs.ts";
 import type { AuthContext } from "../auth.ts";
-import { ARCHIVED_PROJECT_MESSAGE } from "./project-target.ts";
+import { ARCHIVED_PROJECT_MESSAGE, projectNotFoundMessage } from "./project-target.ts";
 import { NOT_CHARGED_SENTENCE } from "../credits/free-refusal.ts";
 import { registerAll, type RegisteredTool } from "./registry.ts";
 import { makeGenerateReportTool } from "./generate-report.ts";
@@ -498,7 +498,17 @@ async function callThroughRegistry(
 }
 
 describe("generate_report refusals — what the CLIENT receives", () => {
-  it("no such project: the setup_project sentence verbatim, no crash sentence, nets to zero", async () => {
+  /**
+   * S6/GR-8: the sentence is the family's SHARED projectNotFoundMessage now, not this tool's own
+   * (#203 closed connect_gsc's copy; this closes generate_report's). The expectation is built
+   * from the shared function rather than a retyped literal, so the two can never drift apart —
+   * and the regex beside it pins the PROPERTY the switch was made for: the reader is pointed at
+   * list_projects, where the id they already have can be found, and not only at setup_project.
+   *
+   * The fee sentence is asserted to appear EXACTLY ONCE: the shared message already carries it,
+   * and the registry's append is what would otherwise print it twice.
+   */
+  it("no such project: the SHARED sentence verbatim, no crash sentence, nets to zero", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
       const user = await makeUser();
@@ -510,10 +520,9 @@ describe("generate_report refusals — what the CLIENT receives", () => {
       const result = await callThroughRegistry(ctxOf(user), reportTool, unknownProjectId);
 
       expect(result.isError).toBe(true);
-      expect(result.content[0]?.text).toBe(
-        `No project found with id ${unknownProjectId}. Create one with setup_project first. ` +
-          NOT_CHARGED_SENTENCE,
-      );
+      expect(result.content[0]?.text).toBe(projectNotFoundMessage(unknownProjectId));
+      expect(result.content[0]?.text).toMatch(/run list_projects/i);
+      expect(result.content[0]?.text?.match(/not charged/gi)).toHaveLength(1);
       expect(result.content[0]?.text).not.toMatch(/failed unexpectedly/i);
       expect(result.content[0]?.text).not.toMatch(/reference/i);
       expect(errorSpy).not.toHaveBeenCalled();

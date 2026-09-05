@@ -168,4 +168,37 @@ describe("mcp auth against local Supabase", () => {
     expect(rowsA.map((row) => row.id)).not.toContain(b.keyId);
     expect(rowsA.every((row) => row.user_id === userA)).toBe(true);
   });
+
+  /**
+   * (e) THE BY-ID SIBLING, against real rows (H-3, Dilim 6 referee HM9).
+   *
+   * `selectOwnById` is the read `loadOwnProject` — and through it the ownership gate of every
+   * tool that takes a `project_id` — is built on. Deleting its `.eq("user_id", …)` left the fast
+   * lane green at 4198/4198 AND left this lane green too, because (d) above exercises only
+   * `selectOwn`, its sibling. This spec is the behavioural half of that pin (the statement half
+   * is `tools/service-client-pins.test.ts`): a row that EXISTS but belongs to someone else must
+   * read as null, indistinguishably from an id that exists nowhere.
+   */
+  it("(e) selectOwnById: another tenant's real row reads as null, like a missing one", async () => {
+    const userA = await makeUser();
+    const userB = await makeUser();
+    const a = await insertKey(userA);
+    const b = await insertKey(userB);
+
+    const scoped = forUser(service, userA);
+    const own = await scoped.selectOwnById<{ id: string; user_id: string }>(
+      "api_keys",
+      a.keyId,
+      "id, user_id",
+    );
+    expect(own?.id).toBe(a.keyId);
+    expect(own?.user_id).toBe(userA);
+
+    // B's key EXISTS — the read is filtered, not empty — and a uuid nobody owns is the control:
+    // both answer null, which is what makes "no such row" and "not yours" the same sentence.
+    const theirs = await scoped.selectOwnById("api_keys", b.keyId, "id, user_id");
+    const nobodys = await scoped.selectOwnById("api_keys", randomUUID(), "id, user_id");
+    expect(theirs).toBeNull();
+    expect(nobodys).toBeNull();
+  });
 });

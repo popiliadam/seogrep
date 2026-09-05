@@ -11,6 +11,7 @@ import {
 import type { RankingSeedFetcher, RankingSeedOutcome } from "./crawl-seeds.ts";
 import { DEFAULT_TIME_BUDGET_MS } from "../crawler/crawl.ts";
 import type { AuthContext } from "../auth.ts";
+import { projectNotFoundMessage } from "./project-target.ts";
 
 /**
  * Fast-lane specs for the crawl_site tool SURFACE. All cases here reject at schema
@@ -392,7 +393,12 @@ describe("crawl_site large-site confirmation (dynamic D17 projection)", () => {
     });
     const result = await tool.run(CTX, { project_id: PID });
     expect(result.isError).toBe(true);
-    expect(result.content[0]!.text).toMatch(/no project found/i);
+    // S6/GR-8: the FAMILY's sentence, not one of this tool's own. Built from the shared function
+    // so the two cannot drift, with the property the switch was made for pinned beside it — the
+    // reader is sent to list_projects for the id they already hold, not only to setup_project.
+    expect(result.content[0]!.text).toBe(projectNotFoundMessage(PID));
+    expect(result.content[0]!.text).toMatch(/run list_projects/i);
+    expect(result.content[0]!.text!.match(/not charged/gi)).toHaveLength(1);
     expect(estimateCalled).toBe(false);
     expect(calls).toHaveLength(0);
   });
