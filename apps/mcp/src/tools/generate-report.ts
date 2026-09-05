@@ -6,7 +6,11 @@ import { requireWebBaseUrl } from "../env.ts";
 import { loadLatestCrawl, type LoadCrawlFn } from "../audit/index.ts";
 import { loadLatestPull, type LoadPullFn } from "../gsc-data/index.ts";
 import { buildReportModel, renderReportHtml, resolveReportTitle } from "../report/index.ts";
-import { ARCHIVED_PROJECT_MESSAGE, loadOwnProject } from "./project-target.ts";
+import {
+  ARCHIVED_PROJECT_MESSAGE,
+  loadOwnProject,
+  projectNotFoundMessage,
+} from "./project-target.ts";
 import { defineTool, textResult, type RegisteredTool } from "./registry.ts";
 import { PreconditionNotMetError } from "./precondition.ts";
 
@@ -170,9 +174,14 @@ export function makeGenerateReportTool(deps: GenerateReportDeps = {}): Registere
         // Echoing project_id back leaks nothing: it is the caller's own input, and the read
         // above is filtered to ctx.userId, so "no such project" and "not your project" arrive
         // here identically — the id names what was asked for, never what exists.
-        throw new PreconditionNotMetError(
-          `No project found with id ${project_id}. Create one with setup_project first.`,
-        );
+        //
+        // THE SHARED SENTENCE, not one of its own (S6/GR-8; connect_gsc closed the same item in
+        // #203). This tool used to write "Create one with setup_project first." while the rest of
+        // the family printed projectNotFoundMessage — one state, two texts, and the local one
+        // never told the reader where to FIND an id they already have (list_projects), only how
+        // to make a new one. The shared sentence already ends with the fee sentence, so the
+        // registry's append is a no-op on it rather than a second copy.
+        throw new PreconditionNotMetError(projectNotFoundMessage(project_id));
       }
       // AFTER the ownership gate, never before: an archived project of ANOTHER tenant must stay
       // indistinguishable from one that does not exist (see project-target.ts). TYPED, so the
