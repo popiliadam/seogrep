@@ -18,6 +18,7 @@ import {
 import {
   AI_VISIBILITY_JUDGEMENT_NOTE,
   catchVendorFailure,
+  fanOutNotes,
   internalListLimitField,
   languageCodeField,
   localeNotes,
@@ -351,6 +352,7 @@ export function formatAiVisibilityCompare(
         renderTargetSection(index, target, byKey.get(target.group.aggregation_key) ?? []),
       )
       .join("\n\n"),
+    ...fanOutNotes(result.scope),
     `${AI_VISIBILITY_JUDGEMENT_NOTE}${unansweredNote}`,
   ].join("\n\n");
 }

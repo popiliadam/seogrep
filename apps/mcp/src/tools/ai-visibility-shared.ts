@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { errorResult, type ToolResult } from "./registry.ts";
 import { defaultLocaleWarning, twoLetterTld } from "../format/locale-default.ts";
+import { AI_QUERY_FAN_OUT_MECHANISM } from "./serp-features.ts";
 import {
   isLlmMentionsVendorError,
   PLATFORM_MEANS,
@@ -407,6 +408,31 @@ export function localeNotes(
     notes.push(UNVALIDATED_LOCALE_NOTE);
   }
   return notes;
+}
+
+/**
+ * R-5.5 ON THE TWO SURFACES THAT MEASURE GOOGLE'S AI ANSWERS DIRECTLY, and until now the only two
+ * with no fan-out sentence anywhere: `serp_snapshot` and `keyword_positions` have printed one
+ * since #221, and they merely report that an AI Overview BLOCK was on a page. These two report
+ * what came out of it, which is the reading the mechanism most changes the meaning of.
+ *
+ * IT SHARES THE FACT AND NOT THE SENTENCE. AI_QUERY_FAN_OUT_MECHANISM is the clause about Google;
+ * the ending here is about THIS measurement, because the sibling's ending ("whether a site is
+ * cited inside the block", "the one keyword measured here") describes things this family does not
+ * report and a subject it may not have.
+ *
+ * `chat_gpt` gets nothing: query fan-out is a claim about Google, and printing it under a ChatGPT
+ * measurement would be a mechanism asserted where none was measured.
+ */
+export const AI_VISIBILITY_FAN_OUT_NOTE =
+  `${AI_QUERY_FAN_OUT_MECHANISM} before it writes an answer, so what DataForSEO counted here is ` +
+  "the OUTPUT of that fan-out and not the result of any one query you could run yourself. A " +
+  "figure above cannot be traced back to a single question a person asked, and asking a slightly " +
+  "different one can produce a different set of cited pages.";
+
+/** The fan-out note when this lookup asked about Google, and nothing when it did not. */
+export function fanOutNotes(scope: MeasurementScope): readonly string[] {
+  return scope.platform_requested === "google" ? [AI_VISIBILITY_FAN_OUT_NOTE] : [];
 }
 
 /**

@@ -57,6 +57,22 @@ export const AI_OVERVIEW_FEATURE = "ai_overview";
 export const MAX_NAMED_SERP_FEATURES = 8;
 
 /**
+ * THE MECHANISM ITSELF, in one clause — the half of R-5.5 that is a fact about GOOGLE rather than
+ * about a SERP reading, so that the surfaces which need the fact do not each rephrase it.
+ *
+ * `ai_visibility` and `ai_visibility_compare` measure Google's AI answers directly and were the
+ * two surfaces on the whole product with no fan-out sentence at all (the audit's R-5.5 finding).
+ * They could not print AI_FAN_OUT_NOTE verbatim: its first sentence is about an AI Overview
+ * "reported above", which those two never report, and its tail measures "the one keyword", which
+ * a domain subject does not have. Copying it and editing the copy is how one fact becomes two
+ * wordings that drift — so the clause both need lives here and each surface adds its own ending.
+ * AI_FAN_OUT_NOTE below is byte-identical to what it was before this split.
+ */
+export const AI_QUERY_FAN_OUT_MECHANISM =
+  "Google builds its AI features by query fan-out — it runs further searches of its own across " +
+  "sub-topics";
+
+/**
  * R-5.5, in one sentence, printed wherever this product claims an AI Overview was on the page.
  *
  * The claim it qualifies is narrow and easy to over-read: "DataForSEO reported an AI Overview
@@ -67,10 +83,9 @@ export const MAX_NAMED_SERP_FEATURES = 8;
  */
 export const AI_FAN_OUT_NOTE =
   "An AI Overview reported above is the presence of the block on that results page for that " +
-  "keyword, and nothing more. Google builds its AI features by query fan-out — it runs further " +
-  "searches of its own across sub-topics and draws on a wider set of pages than the one keyword " +
-  "measured here — so this reading does not say whether a site is cited inside the block, and a " +
-  "single keyword does not represent a site's AI visibility.";
+  `keyword, and nothing more. ${AI_QUERY_FAN_OUT_MECHANISM} and draws on a wider set of pages ` +
+  "than the one keyword measured here — so this reading does not say whether a site is cited " +
+  "inside the block, and a single keyword does not represent a site's AI visibility.";
 
 /**
  * Is this one of DataForSEO's AI Overview element types? The FAMILY, not a list of its members —

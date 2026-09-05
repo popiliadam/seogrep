@@ -31,6 +31,7 @@ import {
   catchVendorFailure,
 } from "./ai-visibility-shared.ts";
 import { defaultLocaleWarning } from "../format/locale-default.ts";
+import { AI_QUERY_FAN_OUT_MECHANISM } from "./serp-features.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
 import crossFixture from "../dfs/fixtures/llm-mentions-cross-aggregated-metrics.json";
@@ -491,6 +492,49 @@ describe("NEVER #7 — one platform, one locale, one moment, and no verdict of o
     expect(text).toContain(AI_VISIBILITY_JUDGEMENT_NOTE);
     expect(text).toMatch(/computes no visibility score/i);
     expect(text).toMatch(/different answers to the same question/i);
+  });
+
+  /**
+   * AV-8 / H-4 — THE NOTE IS PINNED BY WHAT IT SAYS, NOT BY ITS NAME.
+   *
+   * Every pin on this constant was `toContain(AI_VISIBILITY_JUDGEMENT_NOTE)`, which asserts the
+   * constant's IDENTITY: emptying it leaves the suite green. Measured — deleting the ordering
+   * sentence from it kept 4198/4198 passing. Two of its three loads had no pin of their own (the
+   * referee measured that the "no visibility score" half WAS pinned at :395, so only these two
+   * were open), and they are the two that carry the NEVER #7 weight.
+   *
+   * Read with the SHORTEST DISTINGUISHING PHRASE and `/i`, per signed lesson 11: a test that
+   * repeats the source literal is a second copy of the sentence, free to be updated alongside it
+   * without ever going red.
+   */
+  it("pins what the judgement note SAYS: it re-orders nothing, and unreported is not zero", async () => {
+    const text = await fixtureAnswer();
+    expect(text).toMatch(/re-orders nothing/i);
+    expect(text).toMatch(/nothing to sort by/i);
+    expect(text).toMatch(/unreported, never as a zero/i);
+  });
+
+  /**
+   * R-5.5 — the mechanism, on the two surfaces that measure Google's AI answers DIRECTLY and had
+   * no fan-out sentence at all until now. It shares the FACT with `serp_snapshot` and
+   * `keyword_positions` (AI_QUERY_FAN_OUT_MECHANISM) and not the sentence: their ending is about
+   * an AI Overview block "reported above", which this tool never reports.
+   *
+   * `chat_gpt` gets none of it. Query fan-out is a claim about Google, and printing it under a
+   * ChatGPT measurement would assert a mechanism nobody measured there.
+   */
+  it("qualifies a google measurement with the query fan-out behind it — and only google", () => {
+    const google: MeasurementScope = {
+      ...FULL_SCOPE,
+      platform_requested: "google",
+      platform_means: PLATFORM_MEANS.google,
+    };
+    const text = formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], google));
+    expect(text).toContain(AI_QUERY_FAN_OUT_MECHANISM);
+    expect(text).toMatch(/output of that fan-out/i);
+    expect(formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], FULL_SCOPE))).not.toContain(
+      AI_QUERY_FAN_OUT_MECHANISM,
+    );
   });
 
   /**

@@ -14,6 +14,7 @@ import {
 import {
   AI_VISIBILITY_JUDGEMENT_NOTE,
   catchVendorFailure,
+  fanOutNotes,
   internalListLimitField,
   languageCodeField,
   localeNotes,
@@ -250,6 +251,7 @@ export function formatAiVisibility(
     ...localeNotes(result.scope, subjectDomains(result)),
     `Rows — ${renderRowCaption(result.result_set, "row")}`,
     result.result_set.rows.map(renderRow).join("\n"),
+    ...fanOutNotes(result.scope),
     `Row order: ${result.row_order_means}`,
     AI_VISIBILITY_JUDGEMENT_NOTE,
   ].join("\n\n");
