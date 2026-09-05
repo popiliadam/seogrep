@@ -644,12 +644,15 @@ describe("createLiveSpeedClient (budget accounting)", () => {
   });
 
   /**
-   * A failed page fails the whole lookup, and the reservation is deliberately left OPEN at its
-   * estimate. A run that timed out may still have been billed by the vendor, so settling at "the
-   * cost of the responses that came back" would UNDER-count the day — the one direction the
-   * budget guard must never err in.
+   * A failed page fails the whole lookup, and the reservation is SETTLED AT ITS OWN ESTIMATE
+   * (DK-3, 2026-09-05) rather than left open to carry the same number. The reason for the number
+   * is untouched and is why it is the estimate and not the responses that came back: a run that
+   * timed out may still have been billed by the vendor, so settling at "the cost of the responses
+   * that came back" would UNDER-count the day — the one direction the budget guard must never err
+   * in. The two assertions that carry that argument are kept verbatim below; what changed is that
+   * `status=open` stops doubling as a headstone.
    */
-  it("fails the whole lookup when one page fails, leaving the reservation open at its estimate", async () => {
+  it("fails the whole lookup when one page fails, settling the reservation at its estimate", async () => {
     const flaky: DfsTimedTransport = async (_url, init) =>
       init.body.includes("/broken")
         ? { ok: false, status: 500, json: async () => ({}) }
@@ -662,10 +665,39 @@ describe("createLiveSpeedClient (budget accounting)", () => {
 
     const rows = ledger.rows();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.actualUsd).toBeNull(); // still open
+    expect(rows[0]?.actualUsd).toBeCloseTo(estimateLighthouseUsd(2), 10); // closed, at the estimate
+    expect(rows[0]?.rowCount).toBe(0); // this call delivered no page to anybody
     expect(rows[0]?.estimatedUsd).toBeCloseTo(estimateLighthouseUsd(2), 10);
-    // The open reservation is never LESS than what could really have been spent.
+    // The settled reservation is never LESS than what could really have been spent.
     expect(rows[0]?.estimatedUsd).toBeGreaterThan(2 * LIGHTHOUSE_PAGE_USD);
+    // ...and today's total is the identical number the open row already counted as (0014's
+    // `coalesce(actual_usd, estimated_usd)`), which is the proof the $3 cap did not move.
+    expect(await ledger.todayUsd()).toBeCloseTo(estimateLighthouseUsd(2), 10);
+  });
+
+  /**
+   * EXACTLY ONE SETTLEMENT ON EITHER PATH — and the ROW cannot prove that, which is finding F-4.
+   * A `finally` wrapping the whole fan-out reaches the healthy lookup too, but it runs AFTER the
+   * real-cost settlement: the memory ledger rejects the second settle, `settleSpend` swallows that
+   * rejection, and the row is left sitting at the REAL cost. Every row assertion below stays green
+   * while every healthy call emits a false "WAKE THE HUMAN" line. So the COUNT is asserted
+   * directly — that is the assertion the outer-`finally` shape actually fails.
+   */
+  it("settles a healthy lookup ONCE, at its REAL cost, not at the failure estimate", async () => {
+    const settle = vi.spyOn(ledger, "settle");
+    const port = createLiveSpeedClient({
+      login: "u",
+      password: "p",
+      transport: async () => ({ ok: true, status: 200, json: async () => fixtureResponse }),
+      ledger,
+    });
+    await port.fetchPageSpeed([URL_UNDER_TEST]);
+    const rows = ledger.rows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.actualUsd).not.toBeCloseTo(estimateLighthouseUsd(1), 10);
+    expect(rows[0]?.rowCount).toBe(1);
+    // A swallowed second settle leaves no trace in the row — only here, and in the log.
+    expect(settle).toHaveBeenCalledTimes(1);
   });
 
   /** Every request body this port sent, parsed, for the two specs below. */

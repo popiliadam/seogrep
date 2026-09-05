@@ -11,6 +11,7 @@ import {
   ROW_ORDER,
   ROW_ORDER_MEANS,
   VENDOR_MAX_INTERNAL_LIST_AGGREGATED,
+  buildAiVisibilityRequestBody,
   createMockAiVisibilityPort,
   disabledAiVisibilityPort,
   type AiVisibilityResult,
@@ -25,7 +26,13 @@ import {
   formatAiVisibility,
   makeAiVisibilityTool,
 } from "./ai-visibility.ts";
-import { AI_VISIBILITY_JUDGEMENT_NOTE, catchVendorFailure } from "./ai-visibility-shared.ts";
+import {
+  AI_VISIBILITY_JUDGEMENT_NOTE,
+  UNVALIDATED_LOCALE_NOTE,
+  catchVendorFailure,
+} from "./ai-visibility-shared.ts";
+import { defaultLocaleWarning } from "../format/locale-default.ts";
+import { AI_QUERY_FAN_OUT_MECHANISM } from "./serp-features.ts";
 import { projectNotFoundMessage, type LoadProjectFn, type ProjectRef } from "./project-target.ts";
 import aggregatedFixture from "../dfs/fixtures/llm-mentions-aggregated-metrics.json";
 import crossFixture from "../dfs/fixtures/llm-mentions-cross-aggregated-metrics.json";
@@ -236,6 +243,29 @@ describe("THE SUBJECT DISCRIMINATION — two subjects, two inputs, nothing borro
     expect(keyword.target).toEqual({ kind: "keyword", keyword: "seo software" });
     expect(keyword.location_name).toBeUndefined();
   });
+
+  /**
+   * THE GATE COMPARES CASE-BLIND, SO THE WIRE MUST NOT. "united states" is waved through by
+   * refinePlatformLocale, and sending that raw string would leave the $0.30 the gate exists to save
+   * exposed on exactly the input the gate accepts — the vendor was never measured accepting a
+   * lower-case name. What goes out is the vendor's own spelling; `google` is untouched.
+   */
+  it("sends chat_gpt's locale in the vendor's spelling, whatever case the caller typed", () => {
+    const sent = buildAiVisibilityRequestBody(
+      buildAiVisibilityQuery(
+        {
+          subject: "domain",
+          platform: "chat_gpt",
+          internal_list_limit: MAX_INTERNAL_LIST_ROWS,
+          location_name: " united states ",
+          language_code: "EN",
+        },
+        "example.com",
+      ),
+    );
+    expect(sent.location_name).toBe("United States");
+    expect(sent.language_code).toBe("en");
+  });
 });
 
 describe("the schema's maximum IS the vendor's published ceiling", () => {
@@ -315,11 +345,103 @@ describe("NEVER #7 — one platform, one locale, one moment, and no verdict of o
     expect(text).toMatch(/rather than one the vendor confirmed/i);
   });
 
-  it("names the locale it asked under — or says plainly that none was specified", async () => {
+  /**
+   * H-2 — THE DEFAULT IS NAMED, because it is KNOWN. This used to end "…so DataForSEO applied its
+   * own default and SeoGrep does not know which": an honest sentence about a fact nobody had
+   * looked up. The vendor publishes both defaults on both endpoints (`location_code` 2840,
+   * `language_code` `en`), so the answer names the locale the lookup really ran in. "We do not
+   * know" and "the United States, in English" are different answers to a 90-credit question, and
+   * only one of them can be acted on.
+   */
+  it("names the locale it asked under — and NAMES the vendor default when none was specified", async () => {
     expect(await fixtureAnswer()).toContain('location_name "United States", language_code "en"');
     const silent = formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], SILENT_SCOPE));
     expect(silent).toMatch(/location_name not specified in this request/i);
     expect(silent).toMatch(/language_code not specified in this request/i);
+    expect(silent).toMatch(/published default — location_code 2840, the United States/i);
+    expect(silent).toMatch(/published default — "en", English/i);
+    // ...and the withdrawn claim is not restated anywhere.
+    expect(silent).not.toMatch(/does not know which/i);
+  });
+
+  /**
+   * H-2 — THE US/ENGLISH DEFAULT WARNING, joined rather than re-worded. This family is the sixth
+   * member of the class format/locale-default.ts was written for, and the module's own rule is
+   * that one mistake gets ONE sentence: on `google` the shared sentence is used verbatim, with
+   * the parameter names THIS family takes substituted in (a location NAME, not a location code).
+   */
+  it("warns a country-code TLD subject riding the default locale, in the shared wording", () => {
+    const scope: MeasurementScope = { ...SILENT_SCOPE, platform_requested: "google" };
+    const text = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], scope),
+      subject: { kind: "domain", domain: "adstark.com.tr" },
+    });
+    expect(text).toContain(
+      defaultLocaleWarning(
+        "adstark.com.tr",
+        { language_code: "en", location_code: 2840 },
+        { language: "language_code", location: "location_name", noun: "value" },
+      ),
+    );
+    // It tells the caller a parameter this tool actually takes.
+    expect(text).toMatch(/pass language_code and location_name for it/);
+    expect(text).not.toMatch(/pass language_code and location_code for it/);
+  });
+
+  /**
+   * ...and on `chat_gpt` the ADVICE has to differ, because "pass the locale for that country" is
+   * advice DataForSEO refuses. The trigger is the same; the next step is the other platform.
+   */
+  it("tells a chat_gpt caller the locale cannot be changed, not to change it", () => {
+    const scope: MeasurementScope = {
+      ...SILENT_SCOPE,
+      platform_requested: "chat_gpt",
+      platform_means: PLATFORM_MEANS.chat_gpt,
+    };
+    const text = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], scope),
+      subject: { kind: "domain", domain: "adstark.com.tr" },
+    });
+    expect(text).toMatch(/for the united states and english only/i);
+    expect(text).toMatch(/no other locale to ask for/i);
+    expect(text).not.toMatch(/pass language_code and location_name for it/);
+  });
+
+  /** A keyword carries no country, and a caller who CHOSE a locale is not second-guessed. */
+  it("stays silent when the subject has no country-code TLD, or the caller named a locale", () => {
+    const keyword = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], SILENT_SCOPE),
+      subject: { kind: "keyword", keyword: "seo software" },
+    });
+    expect(keyword).not.toMatch(/two-letter country-code TLD/i);
+    const chosen = formatAiVisibility({
+      ...resultWith([ROW_WITH_ZERO_AND_SILENCE], FULL_SCOPE),
+      subject: { kind: "domain", domain: "adstark.com.tr" },
+    });
+    expect(chosen).not.toMatch(/two-letter country-code TLD/i);
+  });
+
+  /**
+   * WHAT WAS NOT CHECKED, said out loud. A `google` locale is passed straight to the vendor:
+   * SeoGrep does not hold the vendor's free `locations_and_languages` list, so it is not claiming
+   * the value is valid. A locale the vendor has no data for comes back THIN rather than as an
+   * error — the shape that reads as "nobody mentions you".
+   */
+  it("says a google locale was not validated, and says nothing of the sort on chat_gpt", () => {
+    const scope: MeasurementScope = {
+      ...FULL_SCOPE,
+      platform_requested: "google",
+      platform_means: PLATFORM_MEANS.google,
+      location_name: "Turkey",
+      language_code: "tr",
+    };
+    const text = formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], scope));
+    expect(text).toContain(UNVALIDATED_LOCALE_NOTE);
+    expect(text).toMatch(/locations_and_languages/);
+    // chat_gpt's locale IS checked — claiming otherwise there would be false modesty.
+    expect(formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], FULL_SCOPE))).not.toContain(
+      UNVALIDATED_LOCALE_NOTE,
+    );
   });
 
   /**
@@ -394,6 +516,49 @@ describe("NEVER #7 — one platform, one locale, one moment, and no verdict of o
     expect(text).toContain(AI_VISIBILITY_JUDGEMENT_NOTE);
     expect(text).toMatch(/computes no visibility score/i);
     expect(text).toMatch(/different answers to the same question/i);
+  });
+
+  /**
+   * AV-8 / H-4 — THE NOTE IS PINNED BY WHAT IT SAYS, NOT BY ITS NAME.
+   *
+   * Every pin on this constant was `toContain(AI_VISIBILITY_JUDGEMENT_NOTE)`, which asserts the
+   * constant's IDENTITY: emptying it leaves the suite green. Measured — deleting the ordering
+   * sentence from it kept 4198/4198 passing. Two of its three loads had no pin of their own (the
+   * referee measured that the "no visibility score" half WAS pinned at :395, so only these two
+   * were open), and they are the two that carry the NEVER #7 weight.
+   *
+   * Read with the SHORTEST DISTINGUISHING PHRASE and `/i`, per signed lesson 11: a test that
+   * repeats the source literal is a second copy of the sentence, free to be updated alongside it
+   * without ever going red.
+   */
+  it("pins what the judgement note SAYS: it re-orders nothing, and unreported is not zero", async () => {
+    const text = await fixtureAnswer();
+    expect(text).toMatch(/re-orders nothing/i);
+    expect(text).toMatch(/nothing to sort by/i);
+    expect(text).toMatch(/unreported, never as a zero/i);
+  });
+
+  /**
+   * R-5.5 — the mechanism, on the two surfaces that measure Google's AI answers DIRECTLY and had
+   * no fan-out sentence at all until now. It shares the FACT with `serp_snapshot` and
+   * `keyword_positions` (AI_QUERY_FAN_OUT_MECHANISM) and not the sentence: their ending is about
+   * an AI Overview block "reported above", which this tool never reports.
+   *
+   * `chat_gpt` gets none of it. Query fan-out is a claim about Google, and printing it under a
+   * ChatGPT measurement would assert a mechanism nobody measured there.
+   */
+  it("qualifies a google measurement with the query fan-out behind it — and only google", () => {
+    const google: MeasurementScope = {
+      ...FULL_SCOPE,
+      platform_requested: "google",
+      platform_means: PLATFORM_MEANS.google,
+    };
+    const text = formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], google));
+    expect(text).toContain(AI_QUERY_FAN_OUT_MECHANISM);
+    expect(text).toMatch(/output of that fan-out/i);
+    expect(formatAiVisibility(resultWith([ROW_WITH_ZERO_AND_SILENCE], FULL_SCOPE))).not.toContain(
+      AI_QUERY_FAN_OUT_MECHANISM,
+    );
   });
 
   /**
@@ -532,6 +697,78 @@ describe("ai_visibility free pre-reserve gates (no credit machinery)", () => {
     });
     expect(theirs.isError).toBe(true);
     expect(theirs.content[0]?.text).toBe(projectNotFoundMessage(OTHER_PROJECT_ID));
+  });
+
+  /**
+   * H-1 — THE PLATFORM x LOCALE MATRIX, CHECKED BEFORE THE MONEY MOVES.
+   *
+   * Measured live 2026-09-04: `platform: "chat_gpt"` with `location_name: "Turkey"` reserved the
+   * credits, went out to DataForSEO, and came back `40501 Invalid Field: 'location_name'`; the
+   * same again with `language_code: "tr"`. Two doomed attempts at $0.30 of reserved vendor budget
+   * each then tripped the $0.50 daily free-vendor allowance and PAUSED the tool for that account
+   * until 00:00 UTC — so one caller's locale typo took the tool down for the day.
+   *
+   * The vendor publishes the rule that makes both refusals predictable without spending anything:
+   * "chat_gpt data is available for the United States and English only" (DataForSEO, LLM Mentions
+   * aggregated_metrics, read 2026-09-05). This is that rule applied where it costs nothing. It
+   * lands in the SCHEMA, not in the handler, so "before the reserve" is a property of the shape
+   * rather than of the order somebody happened to write the gates in.
+   */
+  it("refuses chat_gpt with a non-US location BEFORE any reserve, quoting the vendor", async () => {
+    const refused = await serving().run(CTX, {
+      subject: "keyword",
+      keyword: "seo software",
+      platform: "chat_gpt",
+      location_name: "Turkey",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/for the united states and english only/i);
+    expect(refused.content[0]?.text).toMatch(/location_name/);
+    expect(refused.content[0]?.text).toMatch(/not charged/i);
+  });
+
+  it("refuses chat_gpt with a non-English language, and names BOTH fields when both are wrong", async () => {
+    const language = await serving().run(CTX, {
+      subject: "keyword",
+      keyword: "seo software",
+      platform: "chat_gpt",
+      language_code: "tr",
+    });
+    expect(language.isError).toBe(true);
+    expect(language.content[0]?.text).toMatch(/language_code/);
+
+    const both = await serving().run(CTX, {
+      subject: "keyword",
+      keyword: "seo software",
+      platform: "chat_gpt",
+      location_name: "Turkey",
+      language_code: "tr",
+    });
+    expect(both.isError).toBe(true);
+    expect(both.content[0]?.text).toMatch(/location_name/);
+    expect(both.content[0]?.text).toMatch(/language_code/);
+  });
+
+  /**
+   * THE GATE IS NOT A BLANKET REFUSAL OF LOCALES, and these are the counter-values the round that
+   * found H-1 never ran (signed lesson 13: a prescribed diagnosis is a hypothesis until something
+   * measures the other direction). `chat_gpt` in its OWN locale passes; `google` in another
+   * country's passes, because DataForSEO publishes 92 locations for it.
+   *
+   * REACHING THE CREDIT GUARD IS THE ASSERTION: these specs run with no Supabase env, so a call
+   * that gets past every free gate throws on it. A refusal would have returned an isError result
+   * instead, which is what makes this the negative control for the two specs above.
+   */
+  it("lets chat_gpt through in its own locale, and google through in any locale", async () => {
+    for (const locale of [
+      { platform: "chat_gpt", location_name: "United States", language_code: "en" },
+      { platform: "chat_gpt", location_name: "united states" },
+      { platform: "google", location_name: "Turkey", language_code: "tr" },
+    ]) {
+      await expect(
+        serving().run(CTX, { subject: "domain", project_id: PROJECT_ID, ...locale }),
+      ).rejects.toThrow(/SUPABASE/i);
+    }
   });
 
   it("a RESOLVED project_id reaches the credit guard — the gates are not a dead end", async () => {

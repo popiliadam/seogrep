@@ -485,9 +485,81 @@ export function withoutReservedParams(rawInput: unknown): unknown {
  * A schema that is not a plain object (none today) is returned untouched rather than wrapped: it
  * has no unknown-key notion to tighten. The gate against that going unnoticed is the loop over
  * ALL_TOOLS in registry.test.ts, which reads what each tool actually ADVERTISES.
+ *
+ * IT GOES ALL THE WAY DOWN (S1-b, 2026-09-05). The first version tightened only the outermost
+ * object, and the loop that guarded it read only the outermost `additionalProperties` — so
+ * `ai_visibility_compare`'s `targets[]` items advertised nothing, and a live call with
+ * `{domain: "…", bogus_nested: "x"}` was accepted, silently stripped, and BILLED 180 credits.
+ * That is S1's own failure mode one level down, on the priciest tool on the surface, where the
+ * costliest typo is not a joke key but `label` — the vendor's `aggregation_key`, which is what
+ * rows are matched on. Fixing it at the one nested schema would have rebuilt the hand-maintained
+ * list this function exists to abolish.
+ *
+ * MEASURED BEFORE IT WAS WRITTEN: across all 38 tools there is exactly ONE nested object today
+ * (`ai_visibility_compare.targets[]`), so the walk below has one real subject and cannot quietly
+ * change 37 other contracts. registry.test.ts names that table rather than counting it, and
+ * asserts over the ADVERTISED JSON SCHEMA rather than over the zod classes — a nested object
+ * arriving under a wrapper this walk does not know about still shows up as an object node there.
  */
 export function refuseUnknownKeys<TIn>(schema: z.ZodType<TIn>): z.ZodType<TIn> {
-  return schema instanceof z.ZodObject ? (schema.strict() as unknown as z.ZodType<TIn>) : schema;
+  return tightenNode(schema) as z.ZodType<TIn>;
+}
+
+/**
+ * One node of a schema tree, tightened — objects made strict, and their fields (including the
+ * element type of an array) tightened first.
+ *
+ * NOTHING IS REBUILT THAT DID NOT CHANGE. An unchanged node is returned by identity, so a schema
+ * with no nested object is the same object the caller passed and the 37 tools with flat inputs are
+ * untouched by construction rather than by inspection.
+ *
+ * `safeExtend`, not `extend`: zod REFUSES `.extend()` on an object carrying refinements, and every
+ * interesting schema on this surface carries one (the subject rules, the exactly-one-of rules). An
+ * array is cloned with its own def so `.min()`, `.max()` and its description survive — a tightener
+ * that quietly dropped a bound while advertising a stricter contract would be worse than the hole.
+ */
+function tightenNode(schema: z.ZodType): z.ZodType {
+  if (schema instanceof z.ZodObject) {
+    const shape = schema.shape as Record<string, z.ZodType>;
+    const tightenedFields: Record<string, z.ZodType> = {};
+    for (const [key, field] of Object.entries(shape)) {
+      const tightened = tightenNode(field);
+      if (tightened !== field) tightenedFields[key] = tightened;
+    }
+    const withFields =
+      Object.keys(tightenedFields).length === 0 ? schema : schema.safeExtend(tightenedFields);
+    // Both safeExtend() and strict() return a NEW instance, so the object's own `.describe()` is
+    // dropped here for the same reason clone() drops the array's — see carryMeta.
+    return carryMeta(schema, withFields.strict()) as unknown as z.ZodType;
+  }
+  if (schema instanceof z.ZodArray) {
+    const element = schema.element as z.ZodType;
+    const tightened = tightenNode(element);
+    if (tightened === element) return schema;
+    return carryMeta(schema, schema.clone({ ...schema.def, element: tightened }));
+  }
+  return schema;
+}
+
+/**
+ * Copy a schema's registry entry onto its rebuilt twin.
+ *
+ * `.describe()` in zod 4 does NOT live on the def — it is an entry in `z.globalRegistry` keyed by
+ * the schema INSTANCE — so a `clone()` comes back anonymous and every `.describe()` on it is gone.
+ * Measured the moment this walk was first written: `ai_visibility_compare`'s `targets` description
+ * (the one that says THE PRICE IS PER COMPARED TARGET) vanished from tools/list and from its docs
+ * page, and the tool-docs check in verify.sh is what said so. A tightener that silently deletes
+ * the sentence naming a tool's price would have been a worse defect than the hole it closed.
+ *
+ * IT APPLIES TO OBJECTS TOO (F-5), and not only to the cloned array: `.safeExtend()` and
+ * `.strict()` each return a new instance, so an OBJECT's own description was dropped by the same
+ * mechanism. No inner object carries one today, so nothing was red — which is exactly why it was
+ * worth closing before the first one is added and loses its sentence with no gate but docs-drift.
+ */
+function carryMeta<T extends z.ZodType>(from: z.ZodType, to: T): T {
+  const meta = z.globalRegistry.get(from);
+  if (meta !== undefined) z.globalRegistry.add(to, meta);
+  return to;
 }
 
 /**

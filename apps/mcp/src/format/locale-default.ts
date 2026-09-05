@@ -116,6 +116,7 @@ export function onDefaultLocale(input: {
 export function defaultLocaleWarning(
   target: string,
   input: { readonly language_code: string; readonly location_code: number },
+  parameters: LocaleParameterNames = DEFAULT_LOCALE_PARAMETER_NAMES,
 ): string {
   if (!onDefaultLocale(input)) return "";
   const countryCode = twoLetterTld(target);
@@ -123,9 +124,39 @@ export function defaultLocaleWarning(
   return (
     `This lookup used the DEFAULT locale — the United States, in English — but ${target} is a ` +
     `.${countryCode} domain, a two-letter country-code TLD. If the site targets that country, ` +
-    "pass language_code and location_code for it and run this again: a lookup measured under the " +
-    "wrong locale can come back nearly empty, or full of another country's data, and neither " +
-    "looks wrong on the page. SeoGrep does not guess which code belongs to a TLD, so it is not " +
-    "naming one here."
+    `pass ${parameters.language} and ${parameters.location} for it and run this again: a lookup ` +
+    "measured under the wrong locale can come back nearly empty, or full of another country's " +
+    `data, and neither looks wrong on the page. SeoGrep does not guess which ${parameters.noun} ` +
+    "belongs to a TLD, so it is not naming one here."
   );
 }
+
+/**
+ * What the two locale parameters are CALLED on the calling surface, and what one of them IS.
+ *
+ * The four original callers all take `language_code` + `location_code`, which is why the sentence
+ * could name them outright. The LLM Mentions family takes a location NAME instead, so a warning
+ * that told its caller to "pass location_code" would be advice about a parameter that tool does
+ * not accept — a wrong instruction in the confident voice the rest of the sentence earns.
+ *
+ * The defaults keep the original wording BYTE-IDENTICAL, so the four surfaces that never pass
+ * this are untouched and their pins (which compare against this function's own output) still
+ * measure the same string. This is a substitution, not a second wording: the module header's rule
+ * that one mistake gets ONE sentence is what makes parameterising it the right move rather than
+ * copying it.
+ */
+export interface LocaleParameterNames {
+  /** The language parameter's name on the calling surface. */
+  readonly language: string;
+  /** The location parameter's name on the calling surface. */
+  readonly location: string;
+  /** What that location parameter holds, for "does not guess which ___ belongs to a TLD". */
+  readonly noun: string;
+}
+
+/** The names the four original callers use — the wording this sentence was written for. */
+export const DEFAULT_LOCALE_PARAMETER_NAMES: LocaleParameterNames = {
+  language: "language_code",
+  location: "location_code",
+  noun: "code",
+};

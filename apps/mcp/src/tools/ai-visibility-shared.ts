@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { errorResult, type ToolResult } from "./registry.ts";
+import { defaultLocaleWarning, twoLetterTld } from "../format/locale-default.ts";
+import { AI_QUERY_FAN_OUT_MECHANISM } from "./serp-features.ts";
 import {
   isLlmMentionsVendorError,
   PLATFORM_MEANS,
@@ -85,9 +87,145 @@ export function internalListLimitField(vendorMax: number) {
 }
 
 /**
- * `location_name` is a STRING on this family — not the `location_code` NUMBER every other
- * DataForSEO adapter in this repo sends. The description says so, because a caller who knows the
- * other tools will reach for a code.
+ * =====================================================================================
+ * THE PLATFORM x LOCALE MATRIX — the vendor's published rule, applied BEFORE the reserve
+ * =====================================================================================
+ * WHAT IT COST TO NOT HAVE THIS, measured live on 2026-09-04. `platform: "chat_gpt"` with
+ * `location_name: "Turkey"` reserved 90 credits, went out to DataForSEO, and came back
+ * `40501 Invalid Field: 'location_name'`; the same again with `language_code: "tr"`. Neither
+ * charged the caller — withCredits released both — but each burned $0.30 of reserved vendor
+ * budget, and two of them tripped the $0.50 daily free-vendor allowance and PAUSED the tool for
+ * that account until 00:00 UTC. One caller's locale typo took the tool down for the day, and the
+ * happy path could not be measured at all afterwards.
+ *
+ * NONE OF THAT NEEDED TO BE DISCOVERED BY SPENDING. DataForSEO publishes the rule on both
+ * endpoints (read 2026-09-04, re-read 2026-09-05): "chat_gpt data is available for the
+ * `United States` and `English` only", and again as codes — "chat_gpt data is available for
+ * `2840` location code and `en`
+ * language code only". `cross_aggregated_metrics` says it as two notes ("for United States only",
+ * "for English only"). So a chat_gpt request naming any other locale is refused HERE, for free.
+ *
+ * THE FIELDS THEMSELVES ARE NOT THE BUG, which is the correction the audit record needed: the
+ * vendor DOES publish `location_name`, `location_code`, `language_name` and `language_code` on
+ * both endpoints. Dropping them from the schema would have removed a capability `google` really
+ * has (92 locations). What was missing is the pairing rule.
+ *
+ * WHY `google` IS WAVED THROUGH RATHER THAN CHECKED AGAINST A LIST. The vendor's list of 92
+ * locations lives at the FREE `llm_mentions/locations_and_languages` endpoint, and this repo has
+ * not cached it: the published documentation shows exactly ONE example item (Albania, 2008,
+ * `sq`, platforms `["google"]`). A 1-of-92 allowlist would refuse 91 locations that work, and
+ * writing the other 91 from memory is precisely the invention NEVER #7 forbids. So a google
+ * lookup runs, and {@link UNVALIDATED_LOCALE_NOTE} says out loud that the value was not checked
+ * against a list nobody here holds. Caching that endpoint is the follow-up; claiming to have
+ * cached it is not.
+ */
+
+/** The ONLY location `chat_gpt` data exists for, in the vendor's own words. */
+export const CHAT_GPT_ONLY_LOCATION_NAME = "United States";
+/** The ONLY language `chat_gpt` data exists for, as the vendor's `language_code`. */
+export const CHAT_GPT_ONLY_LANGUAGE_CODE = "en";
+/** The vendor's published defaults for BOTH endpoints when the caller names no locale. */
+export const LLM_MENTIONS_DEFAULT_LOCATION_CODE = 2840;
+export const LLM_MENTIONS_DEFAULT_LANGUAGE_CODE = "en";
+
+/** The vendor's sentence, quoted once so no surface paraphrases it into something softer. */
+export const CHAT_GPT_LOCALE_QUOTE =
+  '"chat_gpt data is available for the United States and English only" (DataForSEO, LLM Mentions, ' +
+  "read 2026-09-05)";
+
+/** A caller's locale value, compared the way a NAME or a CODE is compared: trimmed, case-blind. */
+function sameLocaleValue(given: string, published: string): boolean {
+  return given.trim().toLowerCase() === published.toLowerCase();
+}
+
+/** The locale half of both tools' input — the only two fields this rule is about. */
+export interface LocaleInput {
+  readonly platform: LlmPlatform;
+  readonly location_name?: string | undefined;
+  readonly language_code?: string | undefined;
+}
+
+/**
+ * The platform x locale rule as a ZOD refinement, shared by both tools.
+ *
+ * IT IS IN THE SCHEMA, NOT IN A HANDLER, and that is the point: a schema refusal happens before
+ * the tool function is ever entered, so "no credit is reserved and no vendor request goes out" is
+ * a property of the SHAPE rather than of the order somebody wrote the handler's gates in. It is
+ * also why the refusal reaches the caller carrying the registry's own "You were not charged."
+ *
+ * BOTH offending fields are named when both are wrong, on the same argument the subject rules
+ * make above: one message per mistake, not one message per call.
+ */
+export function refinePlatformLocale(input: LocaleInput, ctx: z.RefinementCtx): void {
+  if (input.platform !== "chat_gpt") return;
+  const wrong: Array<{ field: "location_name" | "language_code"; published: string }> = [];
+  if (
+    input.location_name !== undefined &&
+    !sameLocaleValue(input.location_name, CHAT_GPT_ONLY_LOCATION_NAME)
+  ) {
+    wrong.push({ field: "location_name", published: `"${CHAT_GPT_ONLY_LOCATION_NAME}"` });
+  }
+  if (
+    input.language_code !== undefined &&
+    !sameLocaleValue(input.language_code, CHAT_GPT_ONLY_LANGUAGE_CODE)
+  ) {
+    wrong.push({ field: "language_code", published: `"${CHAT_GPT_ONLY_LANGUAGE_CODE}"` });
+  }
+  for (const { field, published } of wrong) {
+    ctx.addIssue({
+      code: "custom",
+      path: [field],
+      message:
+        `platform "chat_gpt" is measured in ONE locale and DataForSEO says so: ` +
+        `${CHAT_GPT_LOCALE_QUOTE}. A "${field}" of anything but ${published} is rejected by the ` +
+        "vendor AFTER the credits are reserved and the paid request has gone out, so it is " +
+        `rejected here instead, where it costs nothing. Either drop "${field}" — the endpoint ` +
+        `then runs in its own published default, location_code ` +
+        `${LLM_MENTIONS_DEFAULT_LOCATION_CODE} in "${LLM_MENTIONS_DEFAULT_LANGUAGE_CODE}", which ` +
+        `is that same locale — or pass ${published}, or ask platform "google", which DataForSEO ` +
+        "does publish other locations and languages for.",
+    });
+  }
+}
+
+/**
+ * The locale that actually goes ON THE WIRE, in the vendor's own spelling.
+ *
+ * {@link refinePlatformLocale} compares case-blind and trimmed, so `" united states "` is ACCEPTED
+ * — deliberately, because refusing a caller over capitalisation is hostile. But acceptance here is
+ * not acceptance THERE: DataForSEO was never measured taking a lower-case `location_name`, and if
+ * it refuses one, the $0.30 the gate exists to save is spent on precisely the input the gate waved
+ * through. So the accepted value is replaced by the published one before it is sent. This is a
+ * rename, never a widening: the refinement has already proven the two are the same value, and a
+ * value the caller did not send stays unsent (the endpoint's own default then applies).
+ */
+export function canonicalLocale(input: LocaleInput): {
+  location_name: string | undefined;
+  language_code: string | undefined;
+} {
+  const canonical = input.platform === "chat_gpt";
+  return {
+    location_name:
+      input.location_name !== undefined && canonical
+        ? CHAT_GPT_ONLY_LOCATION_NAME
+        : input.location_name,
+    language_code:
+      input.language_code !== undefined && canonical
+        ? CHAT_GPT_ONLY_LANGUAGE_CODE
+        : input.language_code,
+  };
+}
+
+/**
+ * `location_name` is what THIS surface sends — a STRING, not the `location_code` NUMBER every
+ * other DataForSEO adapter in this repo sends. The description says so, because a caller who knows
+ * the other tools will reach for a code.
+ *
+ * IT DOES NOT SAY THE VENDOR HAS NO CODE, and it used to. "This vendor family publishes no code"
+ * was written without reading the vendor's field list and is false: `aggregated_metrics` and
+ * `cross_aggregated_metrics` both publish `location_code` (default 2840) and `language_name`
+ * alongside the two fields sent here. Which of the pair SeoGrep sends is a choice of ours; what
+ * the vendor publishes is a fact, and the old sentence dressed the first up as the second.
  */
 export const locationNameField = z
   .string()
@@ -95,9 +233,12 @@ export const locationNameField = z
   .optional()
   .describe(
     'OPTIONAL DataForSEO `location_name` — a NAME, e.g. "United States", not the numeric ' +
-      "location_code the other SeoGrep tools take (this vendor family publishes no code). Omitted " +
-      "by default, in which case DataForSEO applies its own default and the answer says the " +
-      "location was not specified rather than naming one nobody asked for.",
+      "location_code the other SeoGrep tools take (DataForSEO publishes a `location_code` for " +
+      `this endpoint too, defaulting to ${LLM_MENTIONS_DEFAULT_LOCATION_CODE}; SeoGrep sends the ` +
+      "name). Omitted by default, in which case the lookup runs in DataForSEO's own published " +
+      "default — the United States — and the answer says so rather than leaving you to guess. " +
+      'On platform "chat_gpt" that default is the ONLY location the vendor has data for, and any ' +
+      "other value is refused before anything is charged.",
   );
 
 export const languageCodeField = z
@@ -105,8 +246,11 @@ export const languageCodeField = z
   .min(2)
   .optional()
   .describe(
-    "OPTIONAL DataForSEO `language_code`, e.g. \"en\". Omitted by default, in which case the " +
-      "answer says the language was not specified rather than naming one nobody asked for.",
+    'OPTIONAL DataForSEO `language_code`, e.g. "en". Omitted by default, in which case the ' +
+      `lookup runs in DataForSEO's own published default — "${LLM_MENTIONS_DEFAULT_LANGUAGE_CODE}"` +
+      ", English — and the answer says so rather than leaving you to guess. On platform " +
+      '"chat_gpt" that default is the ONLY language the vendor has data for, and any other value ' +
+      "is refused before anything is charged.",
   );
 
 /**
@@ -238,11 +382,129 @@ export function renderNotCarried(row: AiVisibilityRow): string {
   );
 }
 
-/** A locale value the caller supplied, or the honest statement that they supplied none. */
-function localeClause(field: string, value: string | null): string {
+/**
+ * A locale value the caller supplied, or the DEFAULT the vendor applied — NAMED.
+ *
+ * It used to say "DataForSEO applied its own default and SeoGrep does not know which", which was
+ * an honest sentence about a fact nobody had looked up. The vendor publishes both defaults on both
+ * endpoints — `location_code` 2840, `language_code` `en` — so the answer can name the locale it
+ * really ran in. "We do not know" and "the United States, in English" are different answers to a
+ * 90-credit question, and the reader can only act on the second one.
+ */
+function localeClause(field: string, value: string | null, fallback: string): string {
   return value === null
-    ? `${field} not specified in this request, so DataForSEO applied its own default and SeoGrep does not know which`
+    ? `${field} not specified in this request, so the lookup ran in DataForSEO's own published default — ${fallback}`
     : `${field} "${value}"`;
+}
+
+/**
+ * WHAT WAS NOT CHECKED, on a `google` lookup that named a locale.
+ *
+ * DataForSEO publishes the locations and languages this family supports at a FREE endpoint
+ * (`llm_mentions/locations_and_languages`, 92 locations, each listing which platforms it has data
+ * for). SeoGrep does not hold that list, so a `google` locale is passed straight through: it is
+ * the vendor, not this product, that decides whether the value exists. Saying so is the difference
+ * between a value that was checked and one that merely was not rejected — and a locale the vendor
+ * has no data for comes back as a thin answer, not as an error, which is exactly the shape that
+ * reads as "nobody mentions you".
+ */
+export const UNVALIDATED_LOCALE_NOTE =
+  "The location and language above were sent to DataForSEO as you gave them: SeoGrep does not " +
+  "hold the vendor's list of supported locations for this family, so it did not check them and " +
+  "is not claiming they are valid. DataForSEO publishes that list at its own " +
+  "`llm_mentions/locations_and_languages` endpoint. A locale the vendor has no data for comes " +
+  "back as a thin answer rather than as an error, so a nearly empty result here is worth " +
+  "re-reading as a locale question before it is read as an answer about your subject.";
+
+/** Whether this lookup named any locale at all, or is riding both published defaults. */
+function namedALocale(scope: MeasurementScope): boolean {
+  return scope.location_name !== null || scope.language_code !== null;
+}
+
+/**
+ * The locale paragraphs an answer carries, in order, and none of them when there is nothing to
+ * say. ONE composer for both tools: the two surfaces differ in what they can resolve a domain
+ * from, never in what they tell a reader about the same locale (format/locale-default.ts's rule).
+ */
+export function localeNotes(
+  scope: MeasurementScope,
+  domains: readonly string[],
+): readonly string[] {
+  const notes: string[] = [];
+  const warning = aiVisibilityLocaleWarning(scope, domains);
+  if (warning !== "") notes.push(warning);
+  if (scope.platform_requested === "google" && namedALocale(scope)) {
+    notes.push(UNVALIDATED_LOCALE_NOTE);
+  }
+  return notes;
+}
+
+/**
+ * R-5.5 ON THE TWO SURFACES THAT MEASURE GOOGLE'S AI ANSWERS DIRECTLY, and until now the only two
+ * with no fan-out sentence anywhere: `serp_snapshot` and `keyword_positions` have printed one
+ * since #221, and they merely report that an AI Overview BLOCK was on a page. These two report
+ * what came out of it, which is the reading the mechanism most changes the meaning of.
+ *
+ * IT SHARES THE FACT AND NOT THE SENTENCE. AI_QUERY_FAN_OUT_MECHANISM is the clause about Google;
+ * the ending here is about THIS measurement, because the sibling's ending ("whether a site is
+ * cited inside the block", "the one keyword measured here") describes things this family does not
+ * report and a subject it may not have.
+ *
+ * `chat_gpt` gets nothing: query fan-out is a claim about Google, and printing it under a ChatGPT
+ * measurement would be a mechanism asserted where none was measured.
+ */
+export const AI_VISIBILITY_FAN_OUT_NOTE =
+  `${AI_QUERY_FAN_OUT_MECHANISM} before it writes an answer, so what DataForSEO counted here is ` +
+  "the OUTPUT of that fan-out and not the result of any one query you could run yourself. A " +
+  "figure above cannot be traced back to a single question a person asked, and asking a slightly " +
+  "different one can produce a different set of cited pages.";
+
+/** The fan-out note when this lookup asked about Google, and nothing when it did not. */
+export function fanOutNotes(scope: MeasurementScope): readonly string[] {
+  return scope.platform_requested === "google" ? [AI_VISIBILITY_FAN_OUT_NOTE] : [];
+}
+
+/**
+ * THE US/ENGLISH DEFAULT, SAID OUT LOUD ON THIS FAMILY TOO — the sixth member of the class
+ * format/locale-default.ts was written for, joined here rather than re-worded here.
+ *
+ * The trigger is that module's: both parameters omitted AND the subject carries a country-code
+ * TLD. What differs is the ADVICE, and only on `chat_gpt`, where "pass the locale for that
+ * country" would be advice the vendor refuses — DataForSEO has ChatGPT data for the United States
+ * in English and for nothing else, so the honest next step is the other platform, not another
+ * locale. On `google` the shared sentence is used verbatim, with the parameter NAMES this family
+ * actually takes substituted in (it takes a location name, not a location code).
+ *
+ * `domains` is what the lookup RESOLVED to — a comparison passes all of its domain targets, and
+ * the first country-code TLD among them is the one worth naming. A keyword subject passes none:
+ * there is no TLD to argue from, and a phrase carries no country.
+ */
+export function aiVisibilityLocaleWarning(
+  scope: MeasurementScope,
+  domains: readonly string[],
+): string {
+  if (namedALocale(scope)) return "";
+  const subject = domains.find((domain) => twoLetterTld(domain) !== null);
+  if (subject === undefined) return "";
+  if (scope.platform_requested === "chat_gpt") {
+    return (
+      `This lookup used DataForSEO's default locale — the United States (location_code ` +
+      `${LLM_MENTIONS_DEFAULT_LOCATION_CODE}), in English — and ${subject} is a ` +
+      `.${twoLetterTld(subject) ?? ""} domain, a two-letter country-code TLD. On platform ` +
+      '"chat_gpt" that is not something to change: ' +
+      `${CHAT_GPT_LOCALE_QUOTE}, so there is no other locale to ask for and passing one is ` +
+      'refused. Platform "google" is the one DataForSEO publishes other locations for, and it is ' +
+      "the question to ask if this site targets that country."
+    );
+  }
+  return defaultLocaleWarning(
+    subject,
+    {
+      language_code: LLM_MENTIONS_DEFAULT_LANGUAGE_CODE,
+      location_code: LLM_MENTIONS_DEFAULT_LOCATION_CODE,
+    },
+    { language: "language_code", location: "location_name", noun: "value" },
+  );
 }
 
 /**
@@ -273,8 +535,9 @@ export function renderMeasurementScope(scope: MeasurementScope): string {
       : `DataForSEO echoed the platform back as \`${scope.vendor_echoed_platform}\`.`;
   return (
     `What this measures: ${scope.platform_means}\n` +
-    `Where and in what language: ${localeClause("location_name", scope.location_name)}, ` +
-    `${localeClause("language_code", scope.language_code)}.\n` +
+    `Where and in what language: ` +
+    `${localeClause("location_name", scope.location_name, `location_code ${LLM_MENTIONS_DEFAULT_LOCATION_CODE}, the United States`)}, ` +
+    `${localeClause("language_code", scope.language_code, `"${LLM_MENTIONS_DEFAULT_LANGUAGE_CODE}", English`)}.\n` +
     `When: ${when} ${echo}\n` +
     "Over what period: this DataForSEO endpoint takes no date range, so none was asked for and " +
     "none can be — this answer is not scoped to a period you chose."

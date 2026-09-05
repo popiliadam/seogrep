@@ -409,6 +409,57 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
     expect(clash.content[0]?.text).toMatch(/not charged/i);
   });
 
+  /**
+   * H-1 ON THE DEARER SURFACE. `buildAiVisibilityCompareRequestBody` sends the same `localeKeys`
+   * to `cross_aggregated_metrics`, and the vendor publishes the same rule for it: "chat_gpt data
+   * is available for United States only" / "for English only" (DataForSEO, read 2026-09-04). The
+   * sibling's live 40501 was never reproduced here because ONE attempt costs 180-900 credits and
+   * $0.45+ of vendor budget — which is the whole argument for refusing it for free instead.
+   */
+  it("refuses chat_gpt outside its own locale before any reserve, and lets google through", async () => {
+    const refused = await serving().run(CTX, {
+      targets: [{ domain: "a.com" }, { domain: "b.com" }],
+      platform: "chat_gpt",
+      location_name: "Turkey",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/for the united states and english only/i);
+    expect(refused.content[0]?.text).toMatch(/not charged/i);
+
+    // The counter-value: google in the same locale is not refused, so it reaches the guard.
+    await expect(
+      serving().run(CTX, {
+        targets: [{ project_id: PROJECT_ID }, { domain: "b.com" }],
+        platform: "google",
+        location_name: "Turkey",
+        language_code: "tr",
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
+  });
+
+  /**
+   * S1-b, ON THE SURFACE THAT PAID FOR IT. Measured live 2026-09-04:
+   * `{domain: "adstark.com.tr", bogus_nested: "x"}` came back with NO `isError`, the unknown key
+   * silently dropped, and the ledger carrying `-180`. It is the top-level S1 hole one level down,
+   * on the tool where a call costs up to 900 credits — and the expensive shape is not a joke key
+   * but a mistyped `label`, which is the vendor's `aggregation_key` and therefore what rows are
+   * matched on: a dropped `labell` hands a competitor's row a caption nobody chose.
+   *
+   * The refusal must be FREE and must NAME the key. `serving()` reaches the credit guard and
+   * throws on SUPABASE, so a call that got as far as the handler could not return an isError
+   * result at all — which is what makes this assertion a pre-reserve one.
+   */
+  it("refuses an unknown key INSIDE a target — free, named, and before the handler", async () => {
+    const nested = await serving().run(CTX, {
+      targets: [{ domain: "a.com", bogus_nested: "x" }, { domain: "b.com" }],
+      platform: "chat_gpt",
+    });
+    expect(nested.isError).toBe(true);
+    expect(nested.content[0]?.text).toMatch(/bogus_nested/);
+    expect(nested.content[0]?.text).toMatch(/targets/);
+    expect(nested.content[0]?.text).toMatch(/not charged/i);
+  });
+
   it("refuses a target naming none of domain / keyword / project_id, and one naming several", async () => {
     const none = await serving().run(CTX, {
       targets: [{ domain: "a.com" }, {}],

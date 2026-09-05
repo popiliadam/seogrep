@@ -17,12 +17,16 @@ import {
 } from "../dfs/llm-mentions.ts";
 import {
   AI_VISIBILITY_JUDGEMENT_NOTE,
+  canonicalLocale,
   catchVendorFailure,
+  fanOutNotes,
   internalListLimitField,
   languageCodeField,
+  localeNotes,
   locationNameField,
   notEnabledMessage,
   platformField,
+  refinePlatformLocale,
   renderMeasurementScope,
   renderNotCarried,
   renderRowCaption,
@@ -162,7 +166,13 @@ const inputSchema = z.object({
   internal_list_limit: internalListLimitField(VENDOR_MAX_INTERNAL_LIST_CROSS),
   location_name: locationNameField,
   language_code: languageCodeField,
-});
+})
+  // The vendor's platform x locale rule. `buildAiVisibilityCompareRequestBody` sends the SAME
+  // locale keys to cross_aggregated_metrics, and DataForSEO publishes the same restriction for it
+  // ("chat_gpt data is available for United States only" / "for English only"), so the refusal
+  // belongs HERE — free — rather than after a 180-900 credit reserve and a $0.45+ vendor request
+  // the vendor was always going to reject. ai-visibility-shared.ts holds the measurement.
+  .superRefine(refinePlatformLocale);
 
 type AiVisibilityCompareInput = z.infer<typeof inputSchema>;
 
@@ -179,8 +189,11 @@ const DESCRIPTION =
   "Compare how several domains or keywords are mentioned in one AI assistant's answers, side by " +
   "side, from DataForSEO's LLM Mentions data. Pass 2-10 targets (each a domain, a keyword or one " +
   "of your project ids) and a platform — chat_gpt or google. The answer is scoped to THAT " +
-  "assistant, THAT location and language, and whatever moment DataForSEO measured it: this vendor " +
-  "endpoint takes no date range, so there is no period to ask for. The targets are listed in the " +
+  "assistant, to ONE location and language, and to whatever moment DataForSEO measured it: this " +
+  "vendor endpoint takes no date range, so there is no period to ask for. The locale is " +
+  "DataForSEO's own default — the United States, in English — unless you pass location_name and " +
+  'language_code, and on platform "chat_gpt" that default is the ONLY locale the vendor has data ' +
+  "for, so any other value is refused before anything is charged. The targets are listed in the " +
   "order you passed them and nothing is ranked: SeoGrep computes no visibility score, no share of " +
   "voice and no winner, and a target DataForSEO returned no row for is named as unanswered rather " +
   `than shown as a zero. Synchronous — everything comes back immediately. Costs ` +
@@ -326,12 +339,21 @@ export function formatAiVisibilityCompare(
       `LLM Mentions ${vendorFunctionOf(DFS_LLM_MENTIONS_CROSS_AGGREGATED_METRICS_ENDPOINT)}, ` +
       "one request for all of them.",
     renderMeasurementScope(result.scope),
+    // The locale paragraphs, on the domains this comparison RESOLVED to — a keyword target
+    // carries no country to argue from, so it contributes none.
+    ...localeNotes(
+      result.scope,
+      resolved.flatMap((target) =>
+        target.group.target.kind === "domain" ? [target.group.target.domain] : [],
+      ),
+    ),
     `${CALLER_ORDER_NOTE} ${renderRowCaption(result.result_set, "row")}`,
     resolved
       .map((target, index) =>
         renderTargetSection(index, target, byKey.get(target.group.aggregation_key) ?? []),
       )
       .join("\n\n"),
+    ...fanOutNotes(result.scope),
     `${AI_VISIBILITY_JUDGEMENT_NOTE}${unansweredNote}`,
   ].join("\n\n");
 }
@@ -387,8 +409,8 @@ export function makeAiVisibilityCompareTool(deps: AiVisibilityCompareDeps = {}):
         groups,
         platform: input.platform,
         internal_list_limit: input.internal_list_limit,
-        location_name: input.location_name,
-        language_code: input.language_code,
+        // The vendor's own spelling goes on the wire, not the caller's case. See canonicalLocale.
+        ...canonicalLocale(input),
       };
       const port = deps.port ?? resolveDefaultAiVisibilityPort();
       // Free pre-reserve gate 3 — refuse rather than reserve credits or serve fixture mentions.

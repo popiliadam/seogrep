@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
-import { createDbSpendLedger, reserveSpend, settleSpend, type SpendLedger } from "./budget.ts";
+import {
+  createDbSpendLedger,
+  reserveSpend,
+  settleFailedSpend,
+  settleSpend,
+  type SpendLedger,
+} from "./budget.ts";
 import { defaultDfsTransport, DFS_REQUEST_TIMEOUT_MS, type DfsHttpResponse } from "./client.ts";
 
 /**
@@ -495,11 +501,15 @@ export interface LiveSpeedOptions {
  * fan-out is what keeps the whole operation inside one deadline rather than N of them); (3) ONE
  * settlement with the real total once every request has come back.
  *
- * Any request failing fails the whole lookup, and the reservation is then left OPEN at its
- * estimate — the same conservative choice competitors.ts makes, and here it is the only sound one:
- * a run that timed out may still have been billed by the vendor, so settling at "the cost of the
- * responses we got" would UNDER-count the day. The estimate is never less than the real spend
- * (LIGHTHOUSE_PAGE_USD x pages x margin), so the budget errs toward refusing the next call.
+ * Any request failing fails the whole lookup, and the reservation is then SETTLED AT ITS OWN FULL
+ * ESTIMATE (DK-3, 2026-09-05). The money argument that used to justify leaving it OPEN is intact
+ * and is why the number is the estimate rather than the responses that came back: a run that timed
+ * out may still have been billed by the vendor, so settling at "the cost of the responses we got"
+ * would UNDER-count the day. The estimate is never less than the real spend (LIGHTHOUSE_PAGE_USD x
+ * pages x margin), so the budget still errs toward refusing the next call — and 0014's counter is
+ * `coalesce(actual_usd, estimated_usd)`, so the $3 cap sees the identical number either way
+ * (constitution NEVER #5). What changes is that `status=open` means "in flight" rather than also
+ * meaning "died here"; see budget.ts settleFailedSpend for the leak that was measured.
  *
  * `allSettled`, not `all`: a rejection from `all` leaves its siblings' rejections unhandled, and an
  * unhandled rejection in a request-scoped fan-out is a process-level hazard, not a test artefact.
@@ -561,7 +571,16 @@ export function createLiveSpeedClient(opts: LiveSpeedOptions): SpeedPort {
       const settled = await Promise.allSettled(urls.map((url) => measure(url)));
       const failure = settled.find((outcome) => outcome.status === "rejected");
       if (failure && failure.status === "rejected") {
-        // Reservation deliberately left OPEN at its estimate — see the doc comment above.
+        // Closed at the reservation's OWN estimate — see the doc comment above for why that number
+        // and not the responses that did come back. Here rather than in a `finally` on purpose: a
+        // `finally` wrapping this fan-out would also run AFTER the success settlement below, so
+        // every healthy lookup would attempt a doomed second settle. The ledger rejects it and
+        // settleSpend SWALLOWS the rejection, which is quieter than it sounds: the row keeps its
+        // REAL cost and no assertion about that row goes red. The symptom is a false "WAKE THE
+        // HUMAN" line on every healthy call, teaching the operator to ignore the one signal that
+        // means money — so the spec asserts the settle COUNT, not the row. settleFailedSpend
+        // never throws, so the ORIGINAL vendor error is still the one the caller sees.
+        await settleFailedSpend(reservation, ledger);
         throw failure.reason instanceof Error ? failure.reason : new Error(String(failure.reason));
       }
       const results = settled.flatMap((outcome) =>
