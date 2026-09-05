@@ -534,9 +534,25 @@ function tightenNode(schema: z.ZodType): z.ZodType {
     const element = schema.element as z.ZodType;
     const tightened = tightenNode(element);
     if (tightened === element) return schema;
-    return schema.clone({ ...schema.def, element: tightened }) as unknown as z.ZodType;
+    return carryMeta(schema, schema.clone({ ...schema.def, element: tightened }));
   }
   return schema;
+}
+
+/**
+ * Copy a schema's registry entry onto its rebuilt twin.
+ *
+ * `.describe()` in zod 4 does NOT live on the def — it is an entry in `z.globalRegistry` keyed by
+ * the schema INSTANCE — so a `clone()` comes back anonymous and every `.describe()` on it is gone.
+ * Measured the moment this walk was first written: `ai_visibility_compare`'s `targets` description
+ * (the one that says THE PRICE IS PER COMPARED TARGET) vanished from tools/list and from its docs
+ * page, and the tool-docs check in verify.sh is what said so. A tightener that silently deletes
+ * the sentence naming a tool's price would have been a worse defect than the hole it closed.
+ */
+function carryMeta<T extends z.ZodType>(from: z.ZodType, to: T): T {
+  const meta = z.globalRegistry.get(from);
+  if (meta !== undefined) z.globalRegistry.add(to, meta);
+  return to;
 }
 
 /**

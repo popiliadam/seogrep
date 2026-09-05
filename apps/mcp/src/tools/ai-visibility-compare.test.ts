@@ -421,6 +421,34 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
    * throws on SUPABASE, so a call that got as far as the handler could not return an isError
    * result at all — which is what makes this assertion a pre-reserve one.
    */
+  /**
+   * H-1 ON THE DEARER SURFACE. `buildAiVisibilityCompareRequestBody` sends the same `localeKeys`
+   * to `cross_aggregated_metrics`, and the vendor publishes the same rule for it: "chat_gpt data
+   * is available for United States only" / "for English only" (DataForSEO, read 2026-09-04). The
+   * sibling's live 40501 was never reproduced here because ONE attempt costs 180-900 credits and
+   * $0.45+ of vendor budget — which is the whole argument for refusing it for free instead.
+   */
+  it("refuses chat_gpt outside its own locale before any reserve, and lets google through", async () => {
+    const refused = await serving().run(CTX, {
+      targets: [{ domain: "a.com" }, { domain: "b.com" }],
+      platform: "chat_gpt",
+      location_name: "Turkey",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/united states and english only/i);
+    expect(refused.content[0]?.text).toMatch(/not charged/i);
+
+    // The counter-value: google in the same locale is not refused, so it reaches the guard.
+    await expect(
+      serving().run(CTX, {
+        targets: [{ project_id: PROJECT_ID }, { domain: "b.com" }],
+        platform: "google",
+        location_name: "Turkey",
+        language_code: "tr",
+      }),
+    ).rejects.toThrow(/SUPABASE/i);
+  });
+
   it("refuses an unknown key INSIDE a target — free, named, and before the handler", async () => {
     const nested = await serving().run(CTX, {
       targets: [{ domain: "a.com", bogus_nested: "x" }, { domain: "b.com" }],

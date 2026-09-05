@@ -3054,8 +3054,18 @@ export const DOC_PROSE = {
           "This is a measurement, **not a prediction**. It does not tell you what an assistant " +
           "will say next, why it said what it said, or what to change to be mentioned more — and " +
           "a measurement on one platform does not carry over to another.\n\n" +
-          "The location is a **name** (`location_name`), not the numeric location code the other " +
-          "SeoGrep tools take: this DataForSEO family publishes no code.",
+          "The location is a **name** (`location_name`), not the numeric location code the " +
+          "other SeoGrep tools take. DataForSEO does publish a numeric `location_code` for " +
+          "this endpoint as well — its default is `2840`, the United States — but this tool " +
+          "sends the name.\n\n" +
+          "**`chat_gpt` is measured in one locale only.** DataForSEO publishes ChatGPT " +
+          "mention data for the **United States, in English**, and for nothing else. A " +
+          "`chat_gpt` lookup naming any other `location_name` or `language_code` is refused " +
+          "**before any credits are reserved and before anything goes out to the vendor** — " +
+          "the vendor rejects it anyway, and without this check that rejection costs a paid " +
+          "attempt to discover. `google` carries no such restriction: DataForSEO publishes " +
+          "many locations for it, and SeoGrep passes yours straight through rather than " +
+          "checking it against a list it does not hold.",
       },
     ],
   },
@@ -3167,8 +3177,18 @@ export const DOC_PROSE = {
           "This is a measurement, **not a prediction** and not a verdict: it does not say which " +
           "target is doing better, why an assistant mentioned one and not another, or what to " +
           "change. A measurement on one platform does not carry over to another.\n\n" +
-          "The location is a **name** (`location_name`), not the numeric location code the other " +
-          "SeoGrep tools take: this DataForSEO family publishes no code.",
+          "The location is a **name** (`location_name`), not the numeric location code the " +
+          "other SeoGrep tools take. DataForSEO does publish a numeric `location_code` for " +
+          "this endpoint as well — its default is `2840`, the United States — but this tool " +
+          "sends the name.\n\n" +
+          "**`chat_gpt` is measured in one locale only.** DataForSEO publishes ChatGPT " +
+          "mention data for the **United States, in English**, and for nothing else. A " +
+          "`chat_gpt` lookup naming any other `location_name` or `language_code` is refused " +
+          "**before any credits are reserved and before anything goes out to the vendor** — " +
+          "the vendor rejects it anyway, and without this check that rejection costs a paid " +
+          "attempt to discover. `google` carries no such restriction: DataForSEO publishes " +
+          "many locations for it, and SeoGrep passes yours straight through rather than " +
+          "checking it against a list it does not hold.",
       },
     ],
   },

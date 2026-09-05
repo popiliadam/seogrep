@@ -110,6 +110,107 @@ export const languageCodeField = z
   );
 
 /**
+ * =====================================================================================
+ * THE PLATFORM x LOCALE MATRIX — the vendor's published rule, applied BEFORE the reserve
+ * =====================================================================================
+ * WHAT IT COST TO NOT HAVE THIS, measured live on 2026-09-04. `platform: "chat_gpt"` with
+ * `location_name: "Turkey"` reserved 90 credits, went out to DataForSEO, and came back
+ * `40501 Invalid Field: 'location_name'`; the same again with `language_code: "tr"`. Neither
+ * charged the caller — withCredits released both — but each burned $0.30 of reserved vendor
+ * budget, and two of them tripped the $0.50 daily free-vendor allowance and PAUSED the tool for
+ * that account until 00:00 UTC. One caller's locale typo took the tool down for the day, and the
+ * happy path could not be measured at all afterwards.
+ *
+ * NONE OF THAT NEEDED TO BE DISCOVERED BY SPENDING. DataForSEO publishes the rule on both
+ * endpoints (read 2026-09-04): "chat_gpt data is available for `United States` and `English`
+ * only", and again as codes — "chat_gpt data is available for `2840` location code and `en`
+ * language code only". `cross_aggregated_metrics` says it as two notes ("for United States only",
+ * "for English only"). So a chat_gpt request naming any other locale is refused HERE, for free.
+ *
+ * THE FIELDS THEMSELVES ARE NOT THE BUG, which is the correction the audit record needed: the
+ * vendor DOES publish `location_name`, `location_code`, `language_name` and `language_code` on
+ * both endpoints. Dropping them from the schema would have removed a capability `google` really
+ * has (92 locations). What was missing is the pairing rule.
+ *
+ * WHY `google` IS WAVED THROUGH RATHER THAN CHECKED AGAINST A LIST. The vendor's list of 92
+ * locations lives at the FREE `llm_mentions/locations_and_languages` endpoint, and this repo has
+ * not cached it: the published documentation shows exactly ONE example item (Albania, 2008,
+ * `sq`, platforms `["google"]`). A 1-of-92 allowlist would refuse 91 locations that work, and
+ * writing the other 91 from memory is precisely the invention NEVER #7 forbids. So a google
+ * lookup runs, and {@link unvalidatedLocaleNote} says out loud that the value was not checked
+ * against a list nobody here holds. Caching that endpoint is the follow-up; claiming to have
+ * cached it is not.
+ */
+
+/** The ONLY location `chat_gpt` data exists for, in the vendor's own words. */
+export const CHAT_GPT_ONLY_LOCATION_NAME = "United States";
+/** The ONLY language `chat_gpt` data exists for, as the vendor's `language_code`. */
+export const CHAT_GPT_ONLY_LANGUAGE_CODE = "en";
+/** The vendor's published defaults for BOTH endpoints when the caller names no locale. */
+export const LLM_MENTIONS_DEFAULT_LOCATION_CODE = 2840;
+export const LLM_MENTIONS_DEFAULT_LANGUAGE_CODE = "en";
+
+/** The vendor's sentence, quoted once so no surface paraphrases it into something softer. */
+export const CHAT_GPT_LOCALE_QUOTE =
+  '"chat_gpt data is available for United States and English only" (DataForSEO, LLM Mentions, ' +
+  "read 2026-09-04)";
+
+/** A caller's locale value, compared the way a NAME or a CODE is compared: trimmed, case-blind. */
+function sameLocaleValue(given: string, published: string): boolean {
+  return given.trim().toLowerCase() === published.toLowerCase();
+}
+
+/** The locale half of both tools' input — the only two fields this rule is about. */
+export interface LocaleInput {
+  readonly platform: LlmPlatform;
+  readonly location_name?: string | undefined;
+  readonly language_code?: string | undefined;
+}
+
+/**
+ * The platform x locale rule as a ZOD refinement, shared by both tools.
+ *
+ * IT IS IN THE SCHEMA, NOT IN A HANDLER, and that is the point: a schema refusal happens before
+ * the tool function is ever entered, so "no credit is reserved and no vendor request goes out" is
+ * a property of the SHAPE rather than of the order somebody wrote the handler's gates in. It is
+ * also why the refusal reaches the caller carrying the registry's own "You were not charged."
+ *
+ * BOTH offending fields are named when both are wrong, on the same argument the subject rules
+ * make above: one message per mistake, not one message per call.
+ */
+export function refinePlatformLocale(input: LocaleInput, ctx: z.RefinementCtx): void {
+  if (input.platform !== "chat_gpt") return;
+  const wrong: Array<{ field: "location_name" | "language_code"; published: string }> = [];
+  if (
+    input.location_name !== undefined &&
+    !sameLocaleValue(input.location_name, CHAT_GPT_ONLY_LOCATION_NAME)
+  ) {
+    wrong.push({ field: "location_name", published: `"${CHAT_GPT_ONLY_LOCATION_NAME}"` });
+  }
+  if (
+    input.language_code !== undefined &&
+    !sameLocaleValue(input.language_code, CHAT_GPT_ONLY_LANGUAGE_CODE)
+  ) {
+    wrong.push({ field: "language_code", published: `"${CHAT_GPT_ONLY_LANGUAGE_CODE}"` });
+  }
+  for (const { field, published } of wrong) {
+    ctx.addIssue({
+      code: "custom",
+      path: [field],
+      message:
+        `platform "chat_gpt" is measured in ONE locale and DataForSEO says so: ` +
+        `${CHAT_GPT_LOCALE_QUOTE}. A "${field}" of anything but ${published} is rejected by the ` +
+        "vendor AFTER the credits are reserved and the paid request has gone out, so it is " +
+        `rejected here instead, where it costs nothing. Either drop "${field}" — the endpoint ` +
+        `then runs in its own published default, location_code ` +
+        `${LLM_MENTIONS_DEFAULT_LOCATION_CODE} in "${LLM_MENTIONS_DEFAULT_LANGUAGE_CODE}", which ` +
+        `is that same locale — or pass ${published}, or ask platform "google", which DataForSEO ` +
+        "does publish other locations and languages for.",
+    });
+  }
+}
+
+/**
  * The vendor FUNCTION an endpoint really calls (".../<function>/live"), read off the endpoint the
  * money is spent at rather than retyped — so a heading cannot name one vendor function while the
  * request goes to another.

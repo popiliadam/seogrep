@@ -23,6 +23,7 @@ import {
   locationNameField,
   notEnabledMessage,
   platformField,
+  refinePlatformLocale,
   renderMeasurementScope,
   renderNotCarried,
   renderRowCaption,
@@ -162,7 +163,13 @@ const inputSchema = z.object({
   internal_list_limit: internalListLimitField(VENDOR_MAX_INTERNAL_LIST_CROSS),
   location_name: locationNameField,
   language_code: languageCodeField,
-});
+})
+  // The vendor's platform x locale rule. `buildAiVisibilityCompareRequestBody` sends the SAME
+  // locale keys to cross_aggregated_metrics, and DataForSEO publishes the same restriction for it
+  // ("chat_gpt data is available for United States only" / "for English only"), so the refusal
+  // belongs HERE — free — rather than after a 180-900 credit reserve and a $0.45+ vendor request
+  // the vendor was always going to reject. ai-visibility-shared.ts holds the measurement.
+  .superRefine(refinePlatformLocale);
 
 type AiVisibilityCompareInput = z.infer<typeof inputSchema>;
 
@@ -179,8 +186,11 @@ const DESCRIPTION =
   "Compare how several domains or keywords are mentioned in one AI assistant's answers, side by " +
   "side, from DataForSEO's LLM Mentions data. Pass 2-10 targets (each a domain, a keyword or one " +
   "of your project ids) and a platform — chat_gpt or google. The answer is scoped to THAT " +
-  "assistant, THAT location and language, and whatever moment DataForSEO measured it: this vendor " +
-  "endpoint takes no date range, so there is no period to ask for. The targets are listed in the " +
+  "assistant, to ONE location and language, and to whatever moment DataForSEO measured it: this " +
+  "vendor endpoint takes no date range, so there is no period to ask for. The locale is " +
+  "DataForSEO's own default — the United States, in English — unless you pass location_name and " +
+  'language_code, and on platform "chat_gpt" that default is the ONLY locale the vendor has data ' +
+  "for, so any other value is refused before anything is charged. The targets are listed in the " +
   "order you passed them and nothing is ranked: SeoGrep computes no visibility score, no share of " +
   "voice and no winner, and a target DataForSEO returned no row for is named as unanswered rather " +
   `than shown as a zero. Synchronous — everything comes back immediately. Costs ` +

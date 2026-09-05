@@ -19,6 +19,7 @@ import {
   locationNameField,
   notEnabledMessage,
   platformField,
+  refinePlatformLocale,
   renderMeasurementScope,
   renderNotCarried,
   renderRowCaption,
@@ -141,6 +142,9 @@ const inputSchema = z
     language_code: languageCodeField,
   })
   .superRefine((input, ctx) => {
+    // The vendor's platform x locale rule, refused here rather than after the money moves —
+    // ai-visibility-shared.ts holds what one round of discovering it by spending cost.
+    refinePlatformLocale(input, ctx);
     const rule = SUBJECT_INPUT_RULES[input.subject];
     for (const field of rule.requires) {
       if (input[field] === undefined) {
@@ -170,9 +174,12 @@ type AiVisibilityInput = z.infer<typeof inputSchema>;
 const DESCRIPTION =
   "Measure how a domain or a keyword is mentioned in one AI assistant's answers, from DataForSEO's " +
   'LLM Mentions data. Pick a subject: "domain" (pass target or project_id) or "keyword" (pass ' +
-  "keyword), and a platform — chat_gpt or google. The answer is scoped to THAT assistant, THAT " +
-  "location and language, and whatever moment DataForSEO measured it: this vendor endpoint takes " +
-  "no date range, so there is no period to ask for. Every figure is a DataForSEO field printed " +
+  "keyword), and a platform — chat_gpt or google. The answer is scoped to THAT assistant, to ONE " +
+  "location and language, and to whatever moment DataForSEO measured it: this vendor endpoint " +
+  "takes no date range, so there is no period to ask for. The locale is DataForSEO's own default " +
+  "— the United States, in English — unless you pass location_name and language_code, and on " +
+  'platform "chat_gpt" that default is the ONLY locale the vendor has data for, so any other ' +
+  "value is refused before anything is charged. Every figure is a DataForSEO field printed " +
   "under DataForSEO's own name — SeoGrep computes no visibility score, no share of voice and no " +
   "sentiment, and a figure the vendor did not report is shown as unreported rather than as zero. " +
   `Synchronous — everything comes back immediately. Costs ${TOOL_COSTS.ai_visibility} credits. ` +

@@ -534,6 +534,78 @@ describe("ai_visibility free pre-reserve gates (no credit machinery)", () => {
     expect(theirs.content[0]?.text).toBe(projectNotFoundMessage(OTHER_PROJECT_ID));
   });
 
+  /**
+   * H-1 — THE PLATFORM x LOCALE MATRIX, CHECKED BEFORE THE MONEY MOVES.
+   *
+   * Measured live 2026-09-04: `platform: "chat_gpt"` with `location_name: "Turkey"` reserved the
+   * credits, went out to DataForSEO, and came back `40501 Invalid Field: 'location_name'`; the
+   * same again with `language_code: "tr"`. Two doomed attempts at $0.30 of reserved vendor budget
+   * each then tripped the $0.50 daily free-vendor allowance and PAUSED the tool for that account
+   * until 00:00 UTC — so one caller's locale typo took the tool down for the day.
+   *
+   * The vendor publishes the rule that makes both refusals predictable without spending anything:
+   * "chat_gpt data is available for United States and English only" (DataForSEO, LLM Mentions
+   * aggregated_metrics, read 2026-09-04). This is that rule applied where it costs nothing. It
+   * lands in the SCHEMA, not in the handler, so "before the reserve" is a property of the shape
+   * rather than of the order somebody happened to write the gates in.
+   */
+  it("refuses chat_gpt with a non-US location BEFORE any reserve, quoting the vendor", async () => {
+    const refused = await serving().run(CTX, {
+      subject: "keyword",
+      keyword: "seo software",
+      platform: "chat_gpt",
+      location_name: "Turkey",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/united states and english only/i);
+    expect(refused.content[0]?.text).toMatch(/location_name/);
+    expect(refused.content[0]?.text).toMatch(/not charged/i);
+  });
+
+  it("refuses chat_gpt with a non-English language, and names BOTH fields when both are wrong", async () => {
+    const language = await serving().run(CTX, {
+      subject: "keyword",
+      keyword: "seo software",
+      platform: "chat_gpt",
+      language_code: "tr",
+    });
+    expect(language.isError).toBe(true);
+    expect(language.content[0]?.text).toMatch(/language_code/);
+
+    const both = await serving().run(CTX, {
+      subject: "keyword",
+      keyword: "seo software",
+      platform: "chat_gpt",
+      location_name: "Turkey",
+      language_code: "tr",
+    });
+    expect(both.isError).toBe(true);
+    expect(both.content[0]?.text).toMatch(/location_name/);
+    expect(both.content[0]?.text).toMatch(/language_code/);
+  });
+
+  /**
+   * THE GATE IS NOT A BLANKET REFUSAL OF LOCALES, and these are the counter-values the round that
+   * found H-1 never ran (signed lesson 13: a prescribed diagnosis is a hypothesis until something
+   * measures the other direction). `chat_gpt` in its OWN locale passes; `google` in another
+   * country's passes, because DataForSEO publishes 92 locations for it.
+   *
+   * REACHING THE CREDIT GUARD IS THE ASSERTION: these specs run with no Supabase env, so a call
+   * that gets past every free gate throws on it. A refusal would have returned an isError result
+   * instead, which is what makes this the negative control for the two specs above.
+   */
+  it("lets chat_gpt through in its own locale, and google through in any locale", async () => {
+    for (const locale of [
+      { platform: "chat_gpt", location_name: "United States", language_code: "en" },
+      { platform: "chat_gpt", location_name: "united states" },
+      { platform: "google", location_name: "Turkey", language_code: "tr" },
+    ]) {
+      await expect(
+        serving().run(CTX, { subject: "domain", project_id: PROJECT_ID, ...locale }),
+      ).rejects.toThrow(/SUPABASE/i);
+    }
+  });
+
   it("a RESOLVED project_id reaches the credit guard — the gates are not a dead end", async () => {
     await expect(
       serving().run(CTX, { subject: "domain", project_id: PROJECT_ID, platform: "chat_gpt" }),
