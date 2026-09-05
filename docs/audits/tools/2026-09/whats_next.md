@@ -169,3 +169,30 @@ kalemi bayat:** #198 `plan.mjs`'i doldurdu ve `verify.sh`'e `tool-sweep.mjs --se
 Güncel ağaçta ölçüldü: öz-test **7/7 PASS**, "38 live tools accounted for (22 planned + 16 excluded)";
 bu tool bugün `PLAN` içinde. Bu dosyadaki "harness başlamıyor / EXCLUDED boş / PLAN 19" satırları
 **#198 ile KAPANMIŞTIR** ve düzeltme iş emrine girmez.
+
+## Dilim 6 çapraz atıf (2026-09-04) — YENİDEN ÖLÇÜM DEĞİL
+
+Yalnız Dilim 6'nın (`generate_report`) bu tool'a değdiği iki eksen. Yukarıdaki metin, tablolar ve
+`durum` sütunları **dokunulmadı**.
+
+**1. Sınıf D3-7 — core/spam update takvimi: bu tool onu OKUMUYOR (üçüncü tekrar).**
+`grep -rn "core update\|google-updates\|spam update" apps/mcp/src/tools/whats-next.ts` → **0 eşleşme**
+(main `800d5ee`). Takvim (`gsc-data/google-updates.ts`, 17 kayıt) ağaçta hâlâ tek müşteriye sahip:
+`analyze-content-decay.ts:45`. `whats_next` için bu **AYKIRI değil, KAPSAM DIŞI** — merdiven bir
+zaman penceresi taşımıyor ("hangi adım" der, "neden düştün" demez); Dilim 5'in `analyze_backlinks`
+kararının aynısı. Kayda geçme sebebi: sınıfın **gerçek muhatabı `generate_report` çıktı** — orada
+AYKIRI ve canlı kanıtı var (`generate_report.md` bulgu GR-3).
+
+**2. Rapor ilişkisi — merdiven `generate_report`'u doğru fiyatla, doğru basamakta öneriyor.**
+Canlı, iki özne, **0 kredi** (ham kayıt `scratchpad/dilim6/canli/d6.jsonl`): dentnotion →
+`You're all set … run generate_report (15 credits)`, gerekçe "crawl 9 gün / GSC bugün"; adstark →
+aynı basamak, "crawl bugün / GSC 25 gün". Fiyat `costs.ts:143` ile, gerekçedeki yaşlar aynı gün
+üretilen raporun kendi provenans satırlarıyla (`Crawl from 2026-08-25 (9 days ago)`,
+`Pulled 2026-09-03 (today)`) **tutuyor**; 25 < 30 olduğu için "all set" kuralla tutarlı.
+
+`Then:` listesi iki öznede de aynı yedi kalem — ve **altısının özetini `generate_report` zaten
+basıyor** (aynı saf motorlar, aynı depolanmış veri). Çelişki değil (rapor yedi kez "run `<tool>`
+for the full per-page breakdown" diyor), ama merdiven özet ↔ tam döküm ayrımını **söylemiyor**:
+15 kredilik raporu alan kullanıcı ardından 80 kredilik bir liste görüyor ve örtüşmeyi hiçbir yerde
+okumuyor. F-1'in (katalog kapsamı, İMZA KALEMİ — operatörde) bitişik yüzü; ayrı bulgu numarası
+**açılmadı**, karar ürün kararıdır ve F-1 zaten imza kuyruğundadır.
