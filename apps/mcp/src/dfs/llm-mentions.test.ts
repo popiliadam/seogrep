@@ -1071,12 +1071,15 @@ describe("a vendor refusal is typed, and settled at what the vendor charged", ()
   });
 
   /**
-   * THE CONSERVATIVE DIRECTION IS UNCHANGED where it has to be. A response nobody could read
-   * prices nothing, so the reservation stays OPEN at its estimate rather than being settled at a
-   * number nobody measured — erring toward refusing the next call, which is the direction the
-   * budget guard must never get wrong.
+   * THE CONSERVATIVE DIRECTION IS UNCHANGED, and the row no longer has to stay OPEN to say so
+   * (DK-3, 2026-09-05). A response nobody could read prices nothing, so the reservation is closed
+   * at OUR OWN ESTIMATE — never at the vendor's figure on a path where nothing was delivered
+   * (budget.ts settleFailedSpend). The MONEY half of the old assertion is what this test keeps:
+   * 0014's counter is `coalesce(actual_usd, estimated_usd)`, so today's total is the identical
+   * number it was while the row was open, and that is the assertion proving the $3 cap did not
+   * move. What changes is that `status=open` goes back to meaning "in flight".
    */
-  it("leaves the reservation OPEN at its estimate when nothing priced the failure", async () => {
+  it("SETTLES the reservation at its own estimate when nothing priced the transport failure", async () => {
     const spend = createMemorySpendLedger();
     const noPrice = vi.fn<DfsTransport>(async () => ({
       ok: false,
@@ -1092,8 +1095,58 @@ describe("a vendor refusal is typed, and settled at what the vendor charged", ()
     expect(isLlmMentionsVendorError(error)).toBe(true);
     expect((error as LlmMentionsVendorError).kind).toBe("transport");
     expect((error as LlmMentionsVendorError).vendorStatusCode).toBeNull();
-    expect(spend.rows()[0]?.actualUsd).toBeNull();
+    expect(spend.rows()[0]?.actualUsd).toBeCloseTo(ESTIMATED_AI_VISIBILITY_CALL_USD, 10);
+    expect(spend.rows()[0]?.rowCount).toBe(0);
     expect(await spend.todayUsd()).toBeCloseTo(ESTIMATED_AI_VISIBILITY_CALL_USD, 10);
+  });
+
+  /**
+   * THE THIRD PATH, NAMED. `attempt()`'s catch is shared by two outcomes and only one of them had
+   * a test: a body the parser could not read AND that carried no `cost` fell past the
+   * `vendorPriced !== null` branch, and the row it left behind was measured by nothing. It closes
+   * at the estimate for the same reason the transport path does, and it gets its own name here so
+   * the two are not one measurement wearing two.
+   */
+  it("SETTLES at its own estimate when the body is unreadable AND carries no vendor price", async () => {
+    const spend = createMemorySpendLedger();
+    const unpriced = refusing({
+      status_code: 20000,
+      tasks: [{ status_code: 20000, result: [{ items: [{}] }] }],
+    });
+    const error = await liveClient(unpriced, spend)
+      .fetchAiVisibility(visibilityQuery())
+      .then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+    expect(isLlmMentionsVendorError(error)).toBe(true);
+    expect((error as LlmMentionsVendorError).kind).toBe("unreadable_response");
+    expect(spend.rows()).toHaveLength(1);
+    expect(spend.rows()[0]?.actualUsd).toBeCloseTo(ESTIMATED_AI_VISIBILITY_CALL_USD, 10);
+    expect(await spend.todayUsd()).toBeCloseTo(ESTIMATED_AI_VISIBILITY_CALL_USD, 10);
+  });
+
+  /**
+   * EXACTLY ONE SETTLEMENT, INCLUDING ON THE FAILING PATH. A `finally` would reach the healthy
+   * call too and settle it a SECOND time after its real-cost settlement; `settleSpend` swallows
+   * that rejection, so the row would live on carrying the wrong number with nothing going red.
+   * The memory ledger rejects a double settle, which is what gives this assertion its teeth.
+   */
+  it("settles the failing path exactly ONCE and leaves a healthy call at its real cost", async () => {
+    const spend = createMemorySpendLedger();
+    await liveClient(refusing(refusedTask(null)), spend)
+      .fetchAiVisibility(visibilityQuery())
+      .catch(() => undefined);
+    expect(spend.rows()).toHaveLength(1);
+    expect(spend.rows()[0]?.actualUsd).toBeCloseTo(ESTIMATED_AI_VISIBILITY_CALL_USD, 10);
+
+    const healthy = createMemorySpendLedger();
+    await liveClient(
+      vi.fn<DfsTransport>(async () => ({ ok: true, status: 200, json: async () => aggregatedFixture })),
+      healthy,
+    ).fetchAiVisibility(visibilityQuery());
+    expect(healthy.rows()).toHaveLength(1);
+    expect(healthy.rows()[0]?.actualUsd).not.toBeCloseTo(ESTIMATED_AI_VISIBILITY_CALL_USD, 10);
   });
 
   /** A 20000 envelope whose body this port cannot read is its OWN state — never "no mentions". */

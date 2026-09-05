@@ -3,6 +3,7 @@ import { isDfsLiveEnabled, requireDataForSeoCredentials } from "../env.ts";
 import {
   createDbSpendLedger,
   reserveSpend,
+  settleFailedSpend,
   settleSpend,
   type SpendLedger,
   type SpendReservation,
@@ -1077,8 +1078,18 @@ export interface LiveAiVisibilityOptions {
  * The real (paid) AI-visibility client. Per lookup: (1) ONE reservation BEFORE any HTTP, sized to
  * the clamped row cap and the number of compared targets; (2) ONE request, to the ONE endpoint that
  * tool uses; (3) ONE settlement folded PER REQUEST, so a response that omits `cost` settles at its
- * own estimate rather than at $0.00. A failure at (2) leaves the reservation open at its full
- * estimate, which is never less than the spend that really happened.
+ * own estimate rather than at $0.00.
+ *
+ * EXACTLY ONE SETTLEMENT ON EVERY PATH, INCLUDING THE FAILING ONES (DK-3, 2026-09-05). Until then
+ * this heading said a failure at (2) "leaves the reservation open at its full estimate, which is
+ * never less than the spend that really happened" — a sentence the code below had already outgrown
+ * on one of its three paths (a vendor refusal carrying a price CLOSES the row at that price), and
+ * a heading that survives the code it describes is the defect signed lesson 16 is about. What is
+ * true today, path by path, is in {@link attempt}. The money argument is unchanged and is why the
+ * two unpriced paths settle at OUR estimate: 0014's counter is `coalesce(actual_usd,
+ * estimated_usd)`, so an open row and a row closed at its own estimate are the SAME number to the
+ * $3 cap (constitution NEVER #5). What changes is that `status=open` means "in flight" again
+ * rather than also meaning "died here in August".
  */
 export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiVisibilityPort {
   const transport = opts.transport ?? defaultDfsTransport;
@@ -1101,14 +1112,30 @@ export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiV
    * ONE ATTEMPT: send, parse, and — on either failure — turn the throw into a TYPED one so the
    * tools can explain it instead of the registry calling it unexpected.
    *
-   * THE FAILED CALL IS SETTLED AT WHAT THE VENDOR SAID IT COST. Before this, a rejected task left
-   * the reservation open at its full safety-factored estimate: $0.30 for a call DataForSEO
-   * refused, against a fleet-wide $3.00/day cap that is FAIL-CLOSED. Ten such failures filled the
-   * cap and blocked every WORKING paid tool for the rest of the day — which is what made one
-   * broken tool an outage of the whole paid surface. `settleSpend` is exactly the reconciliation
-   * step for "the real cost is now known", and a refusal the vendor priced at $0.00 is a real cost
-   * of $0.00. When the body carries no price the reservation is left OPEN at its estimate, which
-   * is the conservative direction and unchanged.
+   * THREE OUTCOMES, THREE SETTLEMENTS, AND NO ROW LEFT OPEN (DK-3, 2026-09-05):
+   *
+   *   TRANSPORT FAILED       — nothing came back, so nothing is known about the cost. Settled at
+   *                            OUR OWN estimate (settleFailedSpend), never at a vendor number that
+   *                            does not exist.
+   *   VENDOR PRICED ITS "NO" — the response is unreadable or refused AND carries a `cost`. Settled
+   *                            at THAT, unchanged. Before it, a rejected task left the reservation
+   *                            open at its full safety-factored estimate: $0.30 for a call
+   *                            DataForSEO refused, against a fleet-wide $3.00/day cap that is
+   *                            FAIL-CLOSED. Ten such failures filled the cap and blocked every
+   *                            WORKING paid tool for the rest of the day — which is what made one
+   *                            broken tool an outage of the whole paid surface. `settleSpend` is
+   *                            exactly the reconciliation step for "the real cost is now known",
+   *                            and a refusal the vendor priced at $0.00 is a real cost of $0.00.
+   *                            Whether that reading survives `budget.ts`'s opposite rule is an
+   *                            OPERATOR's question and is deliberately not answered here.
+   *   NOBODY PRICED IT       — unreadable or refused, and no `cost` anywhere. Settled at our own
+   *                            estimate, which is the conservative direction and is the SAME
+   *                            number an open row already counted as (0014's coalesce). This is
+   *                            the path the audit found had no name and no test of its own.
+   *
+   * THE SETTLEMENTS ARE IN THE CATCHES, NOT IN A `finally`. A `finally` would also run after the
+   * success settlement below and turn every healthy call into a doomed second settle — which
+   * settleSpend swallows, leaving the row alive carrying the wrong number.
    */
   async function attempt<T>(
     endpoint: string,
@@ -1120,8 +1147,10 @@ export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiV
     try {
       raw = await post(endpoint, body);
     } catch (error) {
-      // Nothing readable came back, so nothing is known about the cost: the reservation stays open
-      // at its estimate rather than being settled at a number nobody measured.
+      // Nothing readable came back, so nothing is known about the cost: the reservation is CLOSED
+      // at its own estimate rather than at a number nobody measured — and closed rather than left
+      // open, so `status=open` keeps meaning "in flight".
+      await settleFailedSpend(reservation, ledger);
       throw new LlmMentionsVendorError(endpoint, "transport", null, null, detailOf(error));
     }
     try {
@@ -1131,6 +1160,9 @@ export function createLiveAiVisibilityClient(opts: LiveAiVisibilityOptions): AiV
       const vendorPriced = extractLlmMentionsCostUsd(raw);
       if (vendorPriced !== null) {
         await settleSpend(reservation, vendorPriced, 0, ledger);
+      } else {
+        // Nobody priced this one — see the third outcome in the doc comment above.
+        await settleFailedSpend(reservation, ledger);
       }
       throw new LlmMentionsVendorError(
         endpoint,
