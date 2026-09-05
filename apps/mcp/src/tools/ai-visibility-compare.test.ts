@@ -426,15 +426,36 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
     expect(refused.content[0]?.text).toMatch(/for the united states and english only/i);
     expect(refused.content[0]?.text).toMatch(/not charged/i);
 
-    // The counter-value: google in the same locale is not refused, so it reaches the guard.
+    // The counter-value: google in that country's own vendor spelling is not refused, so it
+    // reaches the guard. "Turkiye" is the name DataForSEO publishes; "Turkey" is the one it
+    // rejects, and the spec below is what that typo costs on the dearer surface.
     await expect(
       serving().run(CTX, {
         targets: [{ project_id: PROJECT_ID }, { domain: "b.com" }],
         platform: "google",
-        location_name: "Turkey",
+        location_name: "Turkiye",
         language_code: "tr",
       }),
     ).rejects.toThrow(/SUPABASE/i);
+  });
+
+  /**
+   * H-10 ON THE DEARER SURFACE. The sibling's live 40501 (2026-09-05, `location_name: "Turkey"` on
+   * platform `google`) burned $0.30 of the daily free-vendor allowance for a 90-credit lookup; the
+   * same typo here reserves 180-900 credits and $0.45+ of vendor budget before the vendor gets to
+   * reject it. It is refused in the SCHEMA, so "before the reserve" is a property of the shape
+   * rather than of the order the handler's gates happen to be written in.
+   */
+  it("refuses a known-wrong google location spelling before any reserve, naming the vendor's own", async () => {
+    const refused = await serving().run(CTX, {
+      targets: [{ domain: "a.com" }, { domain: "b.com" }],
+      platform: "google",
+      location_name: "Turkey",
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0]?.text).toMatch(/Turkiye/);
+    expect(refused.content[0]?.text).toMatch(/not charged/i);
+    expect(refused.content[0]?.text).not.toContain("mentions_count");
   });
 
   /**

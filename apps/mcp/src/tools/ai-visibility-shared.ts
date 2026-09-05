@@ -2,6 +2,7 @@ import { z } from "zod";
 import { errorResult, type ToolResult } from "./registry.ts";
 import { defaultLocaleWarning, twoLetterTld } from "../format/locale-default.ts";
 import { AI_QUERY_FAN_OUT_MECHANISM } from "./serp-features.ts";
+import { checkLocationName, locationRefusalMessage } from "../dfs/locations.ts";
 import {
   isLlmMentionsVendorError,
   PLATFORM_MEANS,
@@ -110,14 +111,20 @@ export function internalListLimitField(vendorMax: number) {
  * both endpoints. Dropping them from the schema would have removed a capability `google` really
  * has (92 locations). What was missing is the pairing rule.
  *
- * WHY `google` IS WAVED THROUGH RATHER THAN CHECKED AGAINST A LIST. The vendor's list of 92
- * locations lives at the FREE `llm_mentions/locations_and_languages` endpoint, and this repo has
- * not cached it: the published documentation shows exactly ONE example item (Albania, 2008,
- * `sq`, platforms `["google"]`). A 1-of-92 allowlist would refuse 91 locations that work, and
- * writing the other 91 from memory is precisely the invention NEVER #7 forbids. So a google
- * lookup runs, and {@link UNVALIDATED_LOCALE_NOTE} says out loud that the value was not checked
- * against a list nobody here holds. Caching that endpoint is the follow-up; claiming to have
- * cached it is not.
+ * WHY `google` IS NOT CHECKED AGAINST A LIST. The vendor's list of 92 locations lives at the FREE
+ * `llm_mentions/locations_and_languages` endpoint, and this repo has not cached it: the published
+ * documentation shows exactly ONE example item (Albania, 2008, `sq`, platforms `["google"]`). A
+ * 1-of-92 allowlist would refuse 91 locations that work, and writing the other 91 from memory is
+ * precisely the invention NEVER #7 forbids. Caching that endpoint is the follow-up; claiming to
+ * have cached it is not.
+ *
+ * IT IS NOT WAVED THROUGH EITHER, and this paragraph said it was until H-10 measured the cost —
+ * see {@link refineGoogleLocationName}. A google `location_name` is compared against the
+ * KNOWN-WRONG table in `dfs/locations.ts`, which refuses only a spelling this repo has measured
+ * the vendor rejecting AND can name the replacement for. That is the opposite shape from an
+ * allowlist: it cannot block the 91 locations nobody here has enumerated.
+ * {@link UNVALIDATED_LOCALE_NOTE} carries the distinction onto every answer — a spelling was
+ * checked, this family's own list was not.
  */
 
 /** The ONLY location `chat_gpt` data exists for, in the vendor's own words. */
@@ -157,6 +164,10 @@ export interface LocaleInput {
  * make above: one message per mistake, not one message per call.
  */
 export function refinePlatformLocale(input: LocaleInput, ctx: z.RefinementCtx): void {
+  if (input.platform === "google") {
+    refineGoogleLocationName(input.location_name, ctx);
+    return;
+  }
   if (input.platform !== "chat_gpt") return;
   const wrong: Array<{ field: "location_name" | "language_code"; published: string }> = [];
   if (
@@ -186,6 +197,65 @@ export function refinePlatformLocale(input: LocaleInput, ctx: z.RefinementCtx): 
         "does publish other locations and languages for.",
     });
   }
+}
+
+/**
+ * =====================================================================================
+ * H-10 — THE `google` HALF, WHICH THE PREVIOUS ROUND NOTED AND DID NOT CHECK
+ * =====================================================================================
+ * MEASURED LIVE 2026-09-05 (deploy d367875): `ai_visibility {platform: "google", location_name:
+ * "Turkey", language_code: "tr"}` opened the reservation, went out to DataForSEO and came back
+ * `40501 Invalid Field: 'location_name'`. The credits were released; the $0.30 of daily
+ * free-vendor allowance the attempt burned was not, and that is the same budget H-1's two doomed
+ * chat_gpt attempts exhausted the day before.
+ *
+ * NOTHING NEW HAD TO BE MEASURED. `dfs/locations.ts` has held `"Turkey"` -> `"Turkiye"` since
+ * slice 3, where `serp_snapshot` paid 13 credits for that identical vendor sentence, and
+ * `serp_snapshot` and `track_keywords` have both consulted it since. The previous slice added
+ * {@link UNVALIDATED_LOCALE_NOTE} — a sentence SAYING the value was unchecked — while the table
+ * that would have caught this exact string was already in the repo, imported by two sibling tools.
+ *
+ * WHAT THIS CHECK IS, AND THE THREE THINGS IT IS NOT. `checkLocationName` is a KNOWN-WRONG table,
+ * not an allowlist (its own header argues why at length): it refuses a name only when it can name
+ * the replacement, and waves every unrecognised name through. So this gate cannot block the ~90
+ * `google` locations DataForSEO publishes and this repo has never enumerated — a false refusal
+ * would cost a customer a location that works, which is the failure mode NEVER #7 and that header
+ * both refuse to risk.
+ *
+ * It is ALSO not a check against this family's own list. The table's spellings were measured on
+ * the SERP `serp_locations` endpoint; LLM Mentions publishes its own, shorter
+ * `locations_and_languages` list (92 locations) that this repo does not hold. So a name this gate
+ * accepts — even the corrected one it suggests — is a vendor SPELLING, never a promise that this
+ * endpoint has AI-mention data for that place. The refusal says that in one sentence and
+ * {@link UNVALIDATED_LOCALE_NOTE} says it on every answer; claiming the stronger check would be
+ * exactly the invention that made the note necessary in the first place.
+ *
+ * And it does not touch `language_code`, which nothing here has measured a canonical form for.
+ *
+ * `chat_gpt` never reaches this: its own rule above already pins `location_name` to the single
+ * value the vendor publishes data for, which is a strictly narrower gate.
+ */
+function refineGoogleLocationName(
+  locationName: string | undefined,
+  ctx: z.RefinementCtx,
+): void {
+  if (locationName === undefined) return;
+  const refusal = checkLocationName(locationName);
+  if (refusal === null) return;
+  // The replacement is a SPELLING from another endpoint's list, said plainly, so pasting it back
+  // is understood as a better guess rather than as a guarantee this family answers for it.
+  const scope =
+    refusal.suggestion === null
+      ? ""
+      : " That replacement is the spelling DataForSEO publishes on its own SERP locations " +
+        "endpoint. SeoGrep does not hold this family's `llm_mentions/locations_and_languages` " +
+        "list, so it is the vendor's name for that place rather than a promise that DataForSEO " +
+        "has AI-mention data for it.";
+  ctx.addIssue({
+    code: "custom",
+    path: ["location_name"],
+    message: `${locationRefusalMessage(refusal)}${scope}`,
+  });
 }
 
 /**
@@ -398,23 +468,32 @@ function localeClause(field: string, value: string | null, fallback: string): st
 }
 
 /**
- * WHAT WAS NOT CHECKED, on a `google` lookup that named a locale.
+ * WHAT WAS AND WAS NOT CHECKED, on a `google` lookup that named a locale.
+ *
+ * It used to say the values "were sent as you gave them" and were not checked at all. Since H-10
+ * that is false in one direction and still true in the other, and BOTH halves have to be said:
+ * a location NAME is now compared against `dfs/locations.ts` before anything is reserved, so a
+ * spelling this repo has measured the vendor rejecting is refused for free — but that table is a
+ * handful of SERP-endpoint spellings, not this family's own list.
  *
  * DataForSEO publishes the locations and languages this family supports at a FREE endpoint
  * (`llm_mentions/locations_and_languages`, 92 locations, each listing which platforms it has data
- * for). SeoGrep does not hold that list, so a `google` locale is passed straight through: it is
- * the vendor, not this product, that decides whether the value exists. Saying so is the difference
- * between a value that was checked and one that merely was not rejected — and a locale the vendor
- * has no data for comes back as a thin answer, not as an error, which is exactly the shape that
- * reads as "nobody mentions you".
+ * for). SeoGrep does not hold that list. So a name that passes is a name nothing here could
+ * refuse, which is not the same as a name the vendor has data for — and a locale the vendor has no
+ * data for comes back as a thin answer, not as an error, which is exactly the shape that reads as
+ * "nobody mentions you". A note that quietly upgraded a spelling check into a validity check would
+ * hand the reader precisely that misreading.
  */
 export const UNVALIDATED_LOCALE_NOTE =
-  "The location and language above were sent to DataForSEO as you gave them: SeoGrep does not " +
-  "hold the vendor's list of supported locations for this family, so it did not check them and " +
-  "is not claiming they are valid. DataForSEO publishes that list at its own " +
-  "`llm_mentions/locations_and_languages` endpoint. A locale the vendor has no data for comes " +
-  "back as a thin answer rather than as an error, so a nearly empty result here is worth " +
-  "re-reading as a locale question before it is read as an answer about your subject.";
+  "SeoGrep does not hold DataForSEO's list of the locations this family supports — the vendor " +
+  "publishes it at its own `llm_mentions/locations_and_languages` endpoint — so the locale above " +
+  "is not claimed to be one DataForSEO has AI-mention data for. A location name is checked before " +
+  "the call against SeoGrep's own short table of measured DataForSEO spellings, which is why a " +
+  "name known to be misspelled is refused before anything is charged; that is a SPELLING check " +
+  "against a different endpoint's list, not a check against this family's, and the language code " +
+  "is not checked at all. A locale the vendor has no data for comes back as a thin answer rather " +
+  "than as an error, so a nearly empty result here is worth re-reading as a locale question " +
+  "before it is read as an answer about your subject.";
 
 /** Whether this lookup named any locale at all, or is riding both published defaults. */
 function namedALocale(scope: MeasurementScope): boolean {
