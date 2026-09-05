@@ -27,8 +27,8 @@
 | 3 GSC | 5 | 35 | 9 → 9 kapandı | 15 | 3 | 14 | 1 | 2 | 2 |
 | 4 anahtar kelime | 6 | 39 | 9 → 6 kapandı | 18 | 4 | 9 | 4 | 3 | 5 |
 | 5 backlink | 6 | 38 | 13 → 11 kapandı | 24 | 1 | 8 | 0 | 5 | 6 |
-| 6 rapor + AI | 3 (+1 çapraz) | 28 | 8 → 6 kapandı | 17 | 2 | 4 | 0 | 4 | 5 |
-| **TOPLAM** | **38** | **268** | **77 → 70 kapandı** | **145** | **14** | **76** | **11** | **20** | **39** |
+| 6 rapor + AI | 3 (+1 çapraz) | 28 | 8 → 6 kapandı | 17 | 2 | 4 | 0 | 4 | 6 |
+| **TOPLAM** | **38** | **268** | **77 → 70 kapandı** | **145** | **14** | **76** | **11** | **20** | **40** |
 
 Ek: 1 bulgu **ÇÜRÜTÜLDÜ** (Dilim 4, A-8) ve 1 satır **bilgi** (Dilim 6, AVC-6); toplam 268 bu ikisiyle
 kapanır. Dilim 3'ün iki ek canlı turu sayaca **eklenmedi** — kayıt bunu adıyla söylüyor (ders 11:
