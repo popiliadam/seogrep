@@ -26,7 +26,7 @@
 | ERTELENDİ | **0 bulgu düzeyinde** — erteleme SINIF düzeyindedir (kart 4/4 → kart dilimi; `dfs_spend` → operatör kuyruğu) |
 | bilgi satırı | 1 (AVC-6 — "doğru çalıştığı ölçülenler") |
 
-`canlı ✔` işaretli bulgu sayısı: **5** — GR-3, GR-4 (R-7.11), GR-6, GR-7 (deploy `1030e8b`, şef sondası
+`canlı ✔` işaretli bulgu sayısı: **6** — H-10 (deploy `a786cc3`, şef sondası 07:24 UTC: google+"Turkey" ücretsiz ret, google+"Turkiye" −90 vendor kabul); GR-3, GR-4 (R-7.11), GR-6, GR-7 (deploy `1030e8b`, şef sondası
 2026-09-05 06:26 UTC, 15 kr, dentnotion) ve **AV-1/H-1** (deploy `d367875`, 06:47 UTC, adstark).
 **#235'in (K) canlı yarısı YOKTUR** — `google` + `"Turkiye"` mutlu yolu (90 kr) deploy `a786cc3` sonrası
 şefin ayrı ölçümünde; H-10 hücresi bu yüzden `canlı ✔` **almadı**.
@@ -86,17 +86,14 @@ Bu dilimin iki kayda değer satırı:
 | Ölçüm turu (2026-09-04) | **−210** | `ai_visibility_compare` −180 (2 hedef, iade yok) + `generate_report` 2 × −15; `ai_visibility` iki denemesi **net 0** (charge+refund) |
 | J canlı sondası (2026-09-05 06:26 UTC) | **−15** | dentnotion raporu, dört bulgu `canlı ✔` |
 | I canlı sondası (06:47 UTC) | **−90** | `chat_gpt` + US/en mutlu yol; `google` + Turkey **−90/+90** (net 0, H-10); `chat_gpt` + Turkey **ücretsiz** |
-| **Dilim 6 toplamı** | **−315** | **Bakiye 2467** (defter, 2026-09-05 06:47 UTC). K'nın canlısı (90 kr) **henüz harcanmadı** |
+| **Dilim 6 toplamı** | **−405** | **Bakiye 2347** (defter, 2026-09-05 07:24 UTC) — ölçüm 210 + J canlı 15 + I canlı 90 + K canlı 90 |
 
 **Vendor:** ölçüm günü toplam **$0,149** (compare 0,101 + `ai_visibility` 2 × 0 + Dilim 5 sondası 0,0484);
 2026-09-05'te 2 `aggregated_metrics` isteği (biri vendor 40501 ile reddedildi, **$0,30 ödenek** yandı — H-10).
 **Hiçbir kredi fiyatı, marj ya da paket rakamı değişmedi** (NEVER#6): üç PR'ın `credits/costs.ts` diff'i
 **boş**, ölçüldü. `dfs/locations.ts` diff'i de boş (`KNOWN_LOCATIONS`'a satır eklenmedi — NEVER#7).
 
-**Defter aritmetiğinde kapatılmamış 30 kredilik fark:** Dilim 5 kapanışı bakiyeyi **2752** yazıyor,
-ölçüm turu ise "ölçümden sonra **2572**" (2752 − 180). İki `generate_report` çağrısının (2 × −15) hangi
-okumada içerildiği **ölçülmedi**; defter satır satır yeniden okunmadı. Tur toplamı bu yüzden aşağıda
-**defterin Δ'sıyla** verilir, dilim toplamlarının aritmetiğiyle değil (`_TUR-KAPANIS.md`).
+**Defter mutabakatı (şef):** Dilim 5 sonu 2752 → −210 ölçüm = 2542 → −15 J canlı = 2527 → −90 I canlı = 2437 (06:47 UTC, `get_credit_balance` ile okundu) → −90 K canlı = **2347**. Fark yoktu; taslaktaki 2467/"30 kredi" şefin bayat ara toplamıydı (ders 12 analoğu: kendi toplamın değil defter).
 
 ## Kapıların ÖLÇMEDİĞİ — bu kapanışın sınırları
 

@@ -10,7 +10,7 @@
 
 **38/38 tool, 6 dilim, 7 adımlı protokol.** `main` = **`a786cc3`**, canlıda. PR aralığı **#200–#235,
 35 merge** (22'si kod). **268 bulgu · 77 P1'in 70'i kapandı · P0 yok · 145 KAPANDI · 39 `canlı ✔`.**
-Kredi **4519 → 2467**. Fiyat değişmedi (22 kod PR'ının `credits/costs.ts` diff'i boş — ölçüldü).
+Kredi **4519 → 2347** (2026-09-05 07:24 UTC). Fiyat değişmedi (22 kod PR'ının `credits/costs.ts` diff'i boş — ölçüldü).
 Dilim durumları, sayı tablosu, sınıf tekrarları ve kapıların ölçmediği: **`_TUR-KAPANIS.md`**.
 
 Son dilim (6, rapor + AI): ölçüm **#232** · **#233** J · **#234** I · **#235** K. #235 turun **son

@@ -46,14 +46,12 @@ geçti, düzeltilmedi. Bu bir eksiklik değil bir SEÇİMDİR ve burada sayısı
 
 | | |
 |---|---|
-| Bakiye | **4519 → 2467** (defter, 2026-09-05 06:47 UTC) = **Δ 2052 kredi** |
+| Bakiye | **4519 → 2347** (defter `get_credit_balance`, 2026-09-05 07:24 UTC) = **Δ 2172 kredi** |
 | Dilim payları | D1–D3 ≈ 367 · D4 **620** · D5 **780** · D6 **315** |
 | Fiyat değişikliği | **YOK** — 22 düzeltme PR'ının `credits/costs.ts` diff'i **boş** (her dilimde ayrı ayrı ölçüldü, NEVER#6) |
 | Vendor (DFS) | günlük $3 tavanı hiç aşılmadı; ölçülen en yüksek gün **$0,149** (2026-09-04). Tavan bugün de **TAHMİNLE** sayılıyor (sınıf D4-9) |
 
-**Kapatılmamış 30 kredilik fark:** dilim toplamlarının aritmetiği 2082, defterin Δ'sı 2052. Fark
-Dilim 5 → Dilim 6 geçişindeki bakiye okumalarında (2752 ↔ 2572) duruyor ve **ölçülmedi** — defter satır
-satır yeniden okunmadı. Buraya, kapatılmış gibi görünmesin diye yazıldı (ders 16).
+**Defter mutabakatı (şef, 2026-09-05 07:24 UTC):** dilim toplamlarının aritmetiği **2082** + Dilim 6 kapanış turunun K canlısı (**90**, deploy `a786cc3`) = **2172** = defterin Δ'sı (4519 → 2347). Fark **yok**; önceki taslaktaki "30 kredilik fark" şefin bayat bir ara toplamından (2467) kaynaklanıyordu — defter tek gerçek.
 
 ## Sınıfların dilimler arası tekrarı
 
