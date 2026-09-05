@@ -10,6 +10,7 @@ import {
   defineTool,
   evaluateConfirmation,
   readConfirmFlag,
+  refuseUnknownKeys,
   registerAll,
   textResult,
   toInputJsonSchema,
@@ -744,6 +745,89 @@ describe("S1 — unknown input keys are refused, not silently dropped", () => {
     expect(loose).toEqual([]);
     // Not vacuous: the filter above is silent on an empty ALL_TOOLS, and the surface is 38 tools.
     expect(ALL_TOOLS.length).toBe(38);
+  });
+
+  /**
+   * S1-b — THE SAME HOLE, ONE LEVEL DOWN, AND THE LOOP ABOVE COULD NOT SEE IT.
+   *
+   * `refuseUnknownKeys` tightened only the TOP-LEVEL object, so the loop above passed while
+   * `ai_visibility_compare`'s `targets[]` items advertised `additionalProperties: undefined`.
+   * Measured live 2026-09-04: `{domain: "…", bogus_nested: "x"}` was accepted, the unknown key was
+   * silently dropped, and the call ran and BILLED 180 credits — the exact failure S1 closed at the
+   * top level, still open one level down, and expensive here because this is the priciest tool on
+   * the surface (up to 900 credits). The most damaging shape is not a joke key: a mistyped `label`
+   * is the vendor's `aggregation_key`, which is what rows are matched on, so it silently relabels
+   * a competitor's row.
+   *
+   * THE ASSERTION IS OVER THE ADVERTISED JSON SCHEMA, NOT OVER THE ZOD SHAPES, and that is
+   * deliberate (signed lesson 14 — vary the AXIS, not just the value). A walker written against
+   * the zod classes can only see the wrappers its author thought of; a future nested object under
+   * `.optional()`, `.default()` or a union would slip past it and this test would still go red,
+   * because JSON Schema renders every one of those as an object node.
+   */
+  it("every nested object in every advertised schema also refuses unknown keys", () => {
+    const loose: string[] = [];
+    const found: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (typeof node !== "object" || node === null) return;
+      const shape = node as Record<string, unknown>;
+      if (shape.type === "object" && path.includes(".")) {
+        found.push(path);
+        if (shape.additionalProperties !== false) loose.push(path);
+      }
+      if (shape.properties && typeof shape.properties === "object") {
+        for (const [key, value] of Object.entries(shape.properties as Record<string, unknown>)) {
+          walk(value, `${path}.${key}`);
+        }
+      }
+      if (shape.items) walk(shape.items, `${path}[]`);
+      for (const branch of ["anyOf", "oneOf", "allOf"] as const) {
+        const arm = shape[branch];
+        if (Array.isArray(arm)) arm.forEach((value, i) => walk(value, `${path}.${branch}${i}`));
+      }
+    };
+    for (const tool of ALL_TOOLS) walk(tool.inputJsonSchema, tool.name);
+    expect(loose).toEqual([]);
+    // NOT VACUOUS, and the table is named rather than counted: measured across all 38 tools on
+    // 2026-09-05, exactly ONE nested object exists on the whole surface. If a second appears this
+    // list goes red on the ADDITION too, which is the reminder that a new nested shape is a new
+    // place for this hole to reopen.
+    expect(found).toEqual(["ai_visibility_compare.targets[]"]);
+  });
+
+  it("refuseUnknownKeys reaches an object nested in an object AND one nested in an array", () => {
+    const nested = toInputJsonSchema(
+      z.object({
+        one: z.object({ a: z.string() }),
+        many: z.array(z.object({ b: z.string() })).min(2),
+      }),
+    ) as {
+      additionalProperties?: unknown;
+      properties: { one: Record<string, unknown>; many: Record<string, unknown> };
+    };
+    expect(nested.additionalProperties).toBe(false);
+    expect(nested.properties.one.additionalProperties).toBe(false);
+    expect(
+      (nested.properties.many.items as { additionalProperties?: unknown }).additionalProperties,
+    ).toBe(false);
+    // The array's own constraints survive the rebuild — a tightener that dropped `.min(2)` would
+    // loosen a bound while claiming to add one.
+    expect(nested.properties.many.minItems).toBe(2);
+  });
+
+  it("keeps a nested object's OWN refinement while making it strict", () => {
+    const target = z
+      .object({ a: z.string().optional(), b: z.string().optional() })
+      .superRefine((value, ctx) => {
+        if (value.a === undefined && value.b === undefined) {
+          ctx.addIssue({ code: "custom", message: "name exactly one" });
+        }
+      });
+    const tightened = refuseUnknownKeys(z.object({ items: z.array(target) }));
+    expect(tightened.safeParse({ items: [{}] }).error?.issues[0]?.message).toBe("name exactly one");
+    expect(tightened.safeParse({ items: [{ a: "x", zz: 1 }] }).error?.issues[0]?.code).toBe(
+      "unrecognized_keys",
+    );
   });
 
   /**

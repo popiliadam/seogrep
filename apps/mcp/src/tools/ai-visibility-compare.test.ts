@@ -409,6 +409,29 @@ describe("ai_visibility_compare free pre-reserve gates (no credit machinery)", (
     expect(clash.content[0]?.text).toMatch(/not charged/i);
   });
 
+  /**
+   * S1-b, ON THE SURFACE THAT PAID FOR IT. Measured live 2026-09-04:
+   * `{domain: "adstark.com.tr", bogus_nested: "x"}` came back with NO `isError`, the unknown key
+   * silently dropped, and the ledger carrying `-180`. It is the top-level S1 hole one level down,
+   * on the tool where a call costs up to 900 credits — and the expensive shape is not a joke key
+   * but a mistyped `label`, which is the vendor's `aggregation_key` and therefore what rows are
+   * matched on: a dropped `labell` hands a competitor's row a caption nobody chose.
+   *
+   * The refusal must be FREE and must NAME the key. `serving()` reaches the credit guard and
+   * throws on SUPABASE, so a call that got as far as the handler could not return an isError
+   * result at all — which is what makes this assertion a pre-reserve one.
+   */
+  it("refuses an unknown key INSIDE a target — free, named, and before the handler", async () => {
+    const nested = await serving().run(CTX, {
+      targets: [{ domain: "a.com", bogus_nested: "x" }, { domain: "b.com" }],
+      platform: "chat_gpt",
+    });
+    expect(nested.isError).toBe(true);
+    expect(nested.content[0]?.text).toMatch(/bogus_nested/);
+    expect(nested.content[0]?.text).toMatch(/targets/);
+    expect(nested.content[0]?.text).toMatch(/not charged/i);
+  });
+
   it("refuses a target naming none of domain / keyword / project_id, and one naming several", async () => {
     const none = await serving().run(CTX, {
       targets: [{ domain: "a.com" }, {}],
