@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthContext } from "../auth.ts";
-import { AVERAGE_POSITION_NOTE, findQuickWins } from "../gsc-data/index.ts";
+import { AVERAGE_POSITION_NOTE, findQuickWins, STALE_PULL_DAYS } from "../gsc-data/index.ts";
 import type { GscRow, LoadTokenStatusFn, PullData } from "../gsc-data/index.ts";
 import { gscRow, pullData, SAMPLE_PULL } from "../gsc-data/fixtures.ts";
 import { formatGroupedQuickWins, renderQuickWins } from "./find-quick-wins.ts";
@@ -33,12 +33,38 @@ const PULL_JOB_ID = "11112222-3333-4444-5555-666677778888";
 const WEB_BASE_URL = "https://app.test.seogrep.example";
 let priorWebBaseUrl: string | undefined;
 
+/**
+ * THE CLOCK IS FROZEN FOR THIS WHOLE FILE, and that is a correctness fix rather than tidiness.
+ *
+ * Every fixture here dates its pull at a FIXED instant, but the provenance line the tool prints
+ * is computed against `new Date()` — `renderPullProvenance`'s default (gsc-data/load.ts). So the
+ * distance between the fixture and the assertion grew by one day every real day, and on
+ * 2026-09-05 it crossed STALE_PULL_DAYS: the product correctly began appending its staleness
+ * sentence, and the end-anchored footer assertion below went red on a docs-only PR that had
+ * touched no code at all. The test was wrong, not the tool — a fixture pinned to the calendar
+ * measuring a function that reads the wall clock.
+ *
+ * Frozen four days after the pull, matching load.test.ts's own NOW, so the file's shared
+ * PULLED_AT stays FRESH forever and every spec below keeps the meaning it was written with.
+ * Date only (`toFake`), never the timer queue: the tool's path is promises, and faking
+ * setTimeout would hang anything that awaited one.
+ */
+const PULLED_AT = "2026-08-06T09:00:00.000Z";
+const FROZEN_NOW = new Date("2026-08-10T09:00:00.000Z");
+
+/** A pull `days` whole days before the frozen now, in the shape `loadPull` hands back. */
+function pulledDaysAgo(days: number): string {
+  return new Date(FROZEN_NOW.getTime() - days * 86_400_000).toISOString();
+}
+
 beforeAll(() => {
   priorWebBaseUrl = process.env.WEB_BASE_URL;
   process.env.WEB_BASE_URL = WEB_BASE_URL;
+  vi.useFakeTimers({ now: FROZEN_NOW, toFake: ["Date"] });
 });
 
 afterAll(() => {
+  vi.useRealTimers();
   if (priorWebBaseUrl === undefined) delete process.env.WEB_BASE_URL;
   else process.env.WEB_BASE_URL = priorWebBaseUrl;
 });
@@ -71,27 +97,49 @@ function buildFindQuickWins(
 }
 
 describe("find_quick_wins provenance", () => {
-  it("dates the data it just charged for", async () => {
-    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z");
-
-    const result = await tool.run(CTX, { project_id: PROJECT_ID });
-
+  /** The footer's last three lines, which is the shape all of these specs assert on. */
+  async function footerOf(pulledAt: string): Promise<string[]> {
+    const result = await buildFindQuickWins(pulledAt).run(CTX, { project_id: PROJECT_ID });
     expect(result.isError).toBeUndefined();
-    const text = result.content[0]?.text ?? "";
-    expect(text).toContain("Search Console data pulled 2026-08-06");
+    return (result.content[0]?.text ?? "").trimEnd().split("\n");
+  }
+
+  it("dates the data it just charged for", async () => {
+    const lines = await footerOf(PULLED_AT);
+
+    expect(lines.join("\n")).toContain("Search Console data pulled 2026-08-06");
   });
 
-  it("puts the provenance line last in the footer, separated from the findings by a blank line", async () => {
-    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z");
+  /**
+   * BOTH SIDES OF THE STALENESS THRESHOLD, and the threshold itself IMPORTED rather than typed
+   * out: a spec that spells `30` cannot tell a changed threshold from a changed sentence, and it
+   * is the threshold that has already moved once (STALE_PULL_DAYS is an alias now, load.ts).
+   * The pair is what makes the position claim load-bearing — the staleness sentence is appended
+   * to this same line, so a one-directional assertion pins the footer's shape only in whichever
+   * half of the calendar the suite happens to be run in.
+   */
+  it("ends the footer with the bare dated line while the pull is inside the freshness window", async () => {
+    const fresh = pulledDaysAgo(STALE_PULL_DAYS - 1);
+    const lines = await footerOf(fresh);
 
-    const result = await tool.run(CTX, { project_id: PROJECT_ID });
+    // Whole-line equality, not a `.+` tail: the absence of the staleness sentence IS the claim.
+    expect(lines.at(-1)).toBe(
+      `Search Console data pulled ${fresh.slice(0, 10)} (${STALE_PULL_DAYS - 1} days ago).`,
+    );
+    expect(lines.at(-2)).toMatch(/^Analyzed window: /);
+    expect(lines.at(-3)).toBe("");
+  });
 
-    const text = result.content[0]?.text ?? "";
-    const lines = text.trimEnd().split("\n");
-    // The footer grew a window line above the date (gsc-discovery-shared.ts); the date is still
-    // the LAST thing a healthy connection prints, and a blank line still separates the whole
-    // footer from the findings.
-    expect(lines.at(-1)).toMatch(/^Search Console data pulled 2026-08-06 \(.+\)\.$/);
+  it("keeps the line last — now carrying the staleness sentence — once the pull reaches the threshold", async () => {
+    const stale = pulledDaysAgo(STALE_PULL_DAYS);
+    const lines = await footerOf(stale);
+
+    expect(lines.at(-1)).toBe(
+      `Search Console data pulled ${stale.slice(0, 10)} (${STALE_PULL_DAYS} days ago).` +
+        " This data is stale — run pull_gsc_data again for current numbers.",
+    );
+    // The footer's SHAPE is unchanged by the extra sentence: it rides on the provenance line
+    // rather than becoming a line of its own, so the window line and the blank line hold.
     expect(lines.at(-2)).toMatch(/^Analyzed window: /);
     expect(lines.at(-3)).toBe("");
   });
@@ -104,7 +152,7 @@ describe("find_quick_wins provenance", () => {
  */
 describe("find_quick_wins staleness warning", () => {
   it("warns, with the reconnect link, when the stored connection is invalid", async () => {
-    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "invalid");
+    const tool = buildFindQuickWins(PULLED_AT, async () => "invalid");
 
     const result = await tool.run(CTX, { project_id: PROJECT_ID });
 
@@ -119,7 +167,7 @@ describe("find_quick_wins staleness warning", () => {
   });
 
   it("puts the warning AFTER the provenance line, on its own last line", async () => {
-    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "invalid");
+    const tool = buildFindQuickWins(PULLED_AT, async () => "invalid");
 
     const result = await tool.run(CTX, { project_id: PROJECT_ID });
 
@@ -130,7 +178,7 @@ describe("find_quick_wins staleness warning", () => {
 
   it("stays silent for a live connection and for a project with no connection at all", async () => {
     for (const status of ["active", null] as const) {
-      const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => status);
+      const tool = buildFindQuickWins(PULLED_AT, async () => status);
       const text = (await tool.run(CTX, { project_id: PROJECT_ID })).content[0]?.text ?? "";
       expect(text).not.toMatch(/connection expired/i);
     }
@@ -146,7 +194,7 @@ describe("find_quick_wins staleness warning", () => {
     const saved = process.env.WEB_BASE_URL;
     delete process.env.WEB_BASE_URL;
     try {
-      const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "invalid");
+      const tool = buildFindQuickWins(PULLED_AT, async () => "invalid");
 
       const result = await tool.run(CTX, { project_id: PROJECT_ID });
 
@@ -175,7 +223,7 @@ describe("find_quick_wins staleness warning", () => {
   it("still delivers the analysis when the health read fails — the warning is best-effort", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     try {
-      const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => {
+      const tool = buildFindQuickWins(PULLED_AT, async () => {
         throw new Error("gsc connection health lookup failed: connection refused");
       });
 
@@ -234,7 +282,7 @@ describe("the quick-win list is grouped by page", () => {
   const CROWDED_PULL: PullData = pullData(ROWS, []);
 
   async function groupedText(): Promise<string> {
-    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "active", CROWDED_PULL);
+    const tool = buildFindQuickWins(PULLED_AT, async () => "active", CROWDED_PULL);
     const result = await tool.run(CTX, { project_id: PROJECT_ID });
     expect(result.isError).toBeUndefined();
     return result.content[0]?.text ?? "";
@@ -298,7 +346,7 @@ describe("the quick-win list is grouped by page", () => {
       }),
     );
     const tool = buildFindQuickWins(
-      "2026-08-06T09:00:00.000Z",
+      PULLED_AT,
       async () => "active",
       pullData(many, []),
     );
@@ -319,7 +367,7 @@ describe("the quick-win list is grouped by page", () => {
 
   it("still says so when there is nothing to report", async () => {
     const empty = pullData([gscRow({ query: "x", page: "https://shop.test/x", position: 2 })], []);
-    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "active", empty);
+    const tool = buildFindQuickWins(PULLED_AT, async () => "active", empty);
     const result = await tool.run(CTX, { project_id: PROJECT_ID });
     expect(result.content[0]?.text).toContain("No quick wins found");
   });
@@ -452,7 +500,7 @@ describe("each quick-win page carries what to do about it", () => {
   );
 
   async function textFor(pull: PullData): Promise<string> {
-    const tool = buildFindQuickWins("2026-08-06T09:00:00.000Z", async () => "active", pull);
+    const tool = buildFindQuickWins(PULLED_AT, async () => "active", pull);
     const result = await tool.run(CTX, { project_id: PROJECT_ID });
     expect(result.isError).toBeUndefined();
     return result.content[0]?.text ?? "";
